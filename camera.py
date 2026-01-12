@@ -608,6 +608,10 @@ class CameraControlWidget(QWidget):
         self._control_widgets_set = False
         # Don't set a layout yet - will be set when set_control_widgets is called
 
+        # Light swapping timer
+        self.swap_timer = QTimer(self)
+        self.swap_timer.timeout.connect(self.swap_lighting_states)
+
         self.data_manager.start_stop_toggled_signal.connect(self.start_stop_recording)
     
     def set_control_widgets(self, save_path_widget, recording_control_widget):
@@ -1069,6 +1073,12 @@ class CameraControlWidget(QWidget):
             
             camera_num += 1
         
+        # Start light swapping timer if enabled
+        if self.data_manager.swap_lights_enabled:
+            interval_ms = self.data_manager.swap_interval * 1000  # Convert to milliseconds
+            self.swap_timer.start(interval_ms)
+            print(f"[SWAP] Light swapping enabled - interval: {self.data_manager.swap_interval}s")
+        
         # Show the recording window
         self._show_recording_window()
     
@@ -1083,6 +1093,12 @@ class CameraControlWidget(QWidget):
         Stop recording on all cameras and return to preview.
         """
         print("[DEBUG] _stop_all_recordings called")
+        
+        # Stop light swapping timer if running
+        if self.swap_timer.isActive():
+            self.swap_timer.stop()
+            print("[SWAP] Light swapping timer stopped")
+        
         for room, cam in self.camera_widgets.items():
             if self.data_manager.is_running[room]:
                 print(f"[DEBUG] Stopping recording for {room}")

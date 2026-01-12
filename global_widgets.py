@@ -202,12 +202,32 @@ class RecordingControlerWidget(QWidget):
         self.delay_layout.addWidget(self.delay_label)
         self.delay_layout.addWidget(self.delay_widget)
 
+        # Light swapping controls
+        self.swap_lights_chk = QCheckBox("Swapping Lights During Recording", parent=self)
+        self.swap_lights_chk.setChecked(False)
+        self.swap_lights_chk.stateChanged.connect(self.toggle_swap_lights)
+        
+        self.swap_interval_widget = QSpinBox(parent=self)
+        self.swap_interval_widget.setRange(5, 600)
+        self.swap_interval_widget.setValue(30)
+        self.swap_interval_widget.setSingleStep(5)
+        self.swap_interval_widget.setSuffix(" sec")
+        self.swap_interval_widget.valueChanged.connect(lambda value: self.data_manager.set_swap_interval(value))
+        self.swap_interval_label = QLabel("Swap interval:", parent=self)
+        self.swap_interval_layout = QHBoxLayout()
+        self.swap_interval_layout.addWidget(self.swap_interval_label)
+        self.swap_interval_layout.addWidget(self.swap_interval_widget)
+        self.swap_interval_label.hide()
+        self.swap_interval_widget.hide()
+
         layout = QGridLayout()
         layout.addLayout(stop_method_layout, 0, 0, 1, 2)
         layout.addLayout(self.timer_layout, 1, 0, 1, 1)
         layout.addWidget(self.start_time_label, 1, 1, 1, 1)
         layout.addLayout(self.delay_layout, 2, 0, 1, 2)
-        layout.addWidget(self.start_stop_btn, 3, 0, 1, 2)
+        layout.addWidget(self.swap_lights_chk, 3, 0, 1, 2)
+        layout.addLayout(self.swap_interval_layout, 4, 0, 1, 2)
+        layout.addWidget(self.start_stop_btn, 5, 0, 1, 2)
 
         self.setLayout(layout)
 
@@ -235,6 +255,19 @@ class RecordingControlerWidget(QWidget):
             self.data_manager.set_timer_duration(self.timer_widget.value())
 
         self.data_manager.set_stop_method(method)
+    
+    def toggle_swap_lights(self, state):
+        """Show/hide swap interval controls based on checkbox state."""
+        enabled = (state == Qt.Checked)
+        self.data_manager.set_swap_lights_enabled(enabled)
+        
+        if enabled:
+            self.swap_interval_widget.show()
+            self.swap_interval_label.show()
+            self.data_manager.set_swap_interval(self.swap_interval_widget.value())
+        else:
+            self.swap_interval_widget.hide()
+            self.swap_interval_label.hide()
 
 
 class RightColumnWidget(QWidget):

@@ -35,6 +35,8 @@ class DataManager(QObject):
         self.stop_method = "Manual"
         self.timer_duration = None
         self.recording_delay = 0
+        self.swap_lights_enabled = False
+        self.swap_interval = 30  # Default 30 seconds
         self.save_path = None
         self.session_name = None
         self.is_running = {"LightRoom": None, "DarkRoom": None}
@@ -142,6 +144,24 @@ class DataManager(QObject):
             method: "Manual" or "Timer"
         """
         self.stop_method = method
+    
+    def set_swap_lights_enabled(self, enabled):
+        """
+        Enable or disable light swapping during recording.
+        
+        Args:
+            enabled: Boolean indicating if light swapping is enabled
+        """
+        self.swap_lights_enabled = enabled
+    
+    def set_swap_interval(self, interval):
+        """
+        Set the interval for light swapping in seconds.
+        
+        Args:
+            interval: Time in seconds between light swaps
+        """
+        self.swap_interval = interval
     
     def get_timer_duration(self):
         """
