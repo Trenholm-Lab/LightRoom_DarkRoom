@@ -414,14 +414,80 @@ class Camera(QWidget):
                     pass
             
             # Create video configuration for recording
-            # Use the current resolution or default to 1920x1080
             try:
-                if hasattr(self, 'requested_preview_size') and getattr(self, 'requested_preview_size'):
-                    req_size = getattr(self, 'requested_preview_size')
-                    video_config = self.picam.create_video_configuration(main={'size': req_size})
+                # 1. Start with hardcoded default
+                resolution = (1920, 1080)
+                
+                # 2. Check for requested size (legacy)
+                if hasattr(self, 'requested_preview_size') and self.requested_preview_size:
+                    resolution = self.requested_preview_size
+                
+                # 3. Check for applied_controls (from ConfigPopup live apply)
+                elif hasattr(self, 'applied_controls') and self.applied_controls and 'Resolution' in self.applied_controls:
+                    try:
+                        resolution = tuple(self.applied_controls['Resolution'])
+                    except Exception:
+                        pass
+
+                # 4. Check loaded or default config file
                 else:
-                    video_config = self.picam.create_video_configuration(main={'size': (1920, 1080)})
-            except Exception:
+                    try:
+                        import json
+                        # Check for loaded config path, else default
+                        cfg_path = None
+                        if hasattr(self, 'loaded_config_path') and self.loaded_config_path:
+                            p = Path(self.loaded_config_path)
+                            if p.exists():
+                                cfg_path = p
+                        
+                        if cfg_path is None:
+                            p = Path.cwd() / 'default_config.json'
+                            if p.exists():
+                                cfg_path = p
+                        
+                        if cfg_path:
+                            data = json.loads(cfg_path.read_text())
+                            cam_key = str(self.CamDisp_num)
+                            if cam_key in data and 'Resolution' in data[cam_key]:
+                                resolution = tuple(data[cam_key]['Resolution'])
+                    except Exception as e:
+                        dprint(f"[camera] start_recording: error reading config file for resolution: {e}")
+
+                dprint(f"[camera] start_recording: Using resolution {resolution}")
+                video_config = self.picam.create_video_configuration(main={'size': resolution})
+                
+                # Merge controls from applied_controls or config if available
+                # This ensures FPS/Framerate settings are respected during recording
+                controls_to_apply = {}
+                
+                # Get controls from config file if we loaded resolution from there
+                if hasattr(self, 'applied_controls') and self.applied_controls:
+                    controls_to_apply.update(self.applied_controls)
+                else:
+                     try:
+                        # Try to load other controls from file too
+                        import json
+                        cfg_path = Path.cwd() / 'default_config.json'
+                        if cfg_path.exists():
+                            data = json.loads(cfg_path.read_text())
+                            cam_key = str(self.CamDisp_num)
+                            if cam_key in data:
+                                controls_to_apply.update(data[cam_key])
+                     except:
+                        pass
+
+                # Remove Resolution from controls as it's handled by video_config
+                if 'Resolution' in controls_to_apply:
+                    del controls_to_apply['Resolution']
+                
+                # If we have controls, put them into the video config
+                if controls_to_apply:
+                    if 'controls' not in video_config:
+                        video_config['controls'] = {}
+                    video_config['controls'].update(controls_to_apply)
+
+            except Exception as e:
+                dprint(f"[camera] start_recording: Error creating config, falling back: {e}")
                 video_config = self.picam.create_video_configuration()
             
             # Apply the video configuration

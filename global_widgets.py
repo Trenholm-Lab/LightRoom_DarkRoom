@@ -6,7 +6,7 @@ camera setup dialogs, and save path selection. These widgets are shared
 across the application interface.
 """
 
-from PyQt5.QtCore import Qt, QTime, QTimer, pyqtSignal
+from PyQt5.QtCore import Qt, QTime, QTimer, QElapsedTimer, pyqtSignal
 from PyQt5.QtWidgets import *
 import sys
 
@@ -706,7 +706,8 @@ class RecordingWindow(QDialog):
         super().__init__(parent)
         self.mode = mode
         self.duration_minutes = duration_minutes
-        self.elapsed_seconds = 0
+        self.elapsed_timer = QElapsedTimer()
+        self.elapsed_timer.start()
         
         self.setWindowTitle("Recording in Progress")
         self.setModal(True)
@@ -753,20 +754,21 @@ class RecordingWindow(QDialog):
         
         self.update_timer = QTimer()
         self.update_timer.timeout.connect(self.update_display)
-        self.update_timer.start(1000)
+        self.update_timer.start(100) # Update more frequently for smoother UI
         
     def update_display(self):
-        """Update timer display every second."""
-        self.elapsed_seconds += 1
+        """Update timer display."""
+        elapsed_ms = self.elapsed_timer.elapsed()
+        current_elapsed_seconds = elapsed_ms // 1000
         
         if self.mode == "Manual":
-            hours = self.elapsed_seconds // 3600
-            minutes = (self.elapsed_seconds % 3600) // 60
-            seconds = self.elapsed_seconds % 60
+            hours = current_elapsed_seconds // 3600
+            minutes = (current_elapsed_seconds % 3600) // 60
+            seconds = current_elapsed_seconds % 60
             self.timer_label.setText(f"{hours:02d}:{minutes:02d}:{seconds:02d}")
         else:
             total_seconds = int(self.duration_minutes * 60)
-            remaining_seconds = total_seconds - self.elapsed_seconds
+            remaining_seconds = total_seconds - current_elapsed_seconds
             
             if remaining_seconds <= 0:
                 self.timer_label.setText("00:00:00")
@@ -790,7 +792,7 @@ class RecordingWindow(QDialog):
     
     def get_elapsed_time(self):
         """Return elapsed recording time in seconds."""
-        return self.elapsed_seconds
+        return self.elapsed_timer.elapsed() // 1000
     
     def closeEvent(self, event):
         """Clean up timer on window close."""
