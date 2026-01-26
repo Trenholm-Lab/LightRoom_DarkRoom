@@ -98,9 +98,22 @@ python3 main.py
 ### Output Files
 
 Each recording session produces:
-- `{session_name}_camera_1.h264` - Video from camera 1
-- `{session_name}_camera_2.h264` - Video from camera 2
+- `{session_name}_camera_1.mp4` - Converted Video from camera 1
+- `{session_name}_camera_2.mp4` - Converted Video from camera 2
 - `{session_name}_data.txt` - Comprehensive session metadata
+- *(Note: Raw `.h264` files are generated initially but automatically converted to `.mp4` and deleted)*
+
+### Post-Processing & Optimization
+
+- **Automatic Conversion**: The system automatically converts raw H.264 streams to MP4 format after recording stops.
+- **Auto-Cleanup**: Original H.264 files are deleted after successful conversion to save disk space.
+- **Hardcoded Conversion Settings**:
+  - The converter script (`convert_h264_to_mp4.py`) currently forces a **30 FPS** frame rate during conversion to match the default camera configuration.
+  - If you change the camera's frame rate in the configuration, you may need to manually update the frame rate flag (`-r 30`) in `convert_h264_to_mp4.py` to match, otherwise video playback speed may be incorrect.
+- **Resolution & Crop**: 
+  - Default recording resolution is set to **640x480** for stability.
+  - A 100-pixel crop is applied to all sides of the video.
+  - Bitrate is capped at **3 Mbps** to prevent dropped frames.
 
 ### Session Data File
 

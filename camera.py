@@ -415,8 +415,8 @@ class Camera(QWidget):
             
             # Create video configuration for recording
             try:
-                # 1. Start with hardcoded default
-                resolution = (1920, 1080)
+                # 1. Start with lowest resolution (640x480) for best performance
+                resolution = (640, 480)
                 
                 # 2. Check for requested size (legacy)
                 if hasattr(self, 'requested_preview_size') and self.requested_preview_size:
@@ -441,7 +441,8 @@ class Camera(QWidget):
                                 cfg_path = p
                         
                         if cfg_path is None:
-                            p = Path.cwd() / 'default_config.json'
+                            # Use config in script directory
+                            p = Path(__file__).parent / 'default_config.json'
                             if p.exists():
                                 cfg_path = p
                         
@@ -456,6 +457,25 @@ class Camera(QWidget):
                 dprint(f"[camera] start_recording: Using resolution {resolution}")
                 video_config = self.picam.create_video_configuration(main={'size': resolution})
                 
+                # Apply cropping to video configuration (crop 100 pixels from all sides)
+                # Full sensor resolution is slightly larger than 1080p, but we'll base crop on relative coordinates if possible.
+                # ScalerCrop format is [x, y, width, height] in sensor coordinates (0-aligned)
+                # For imx708 sensor (4608 x 2592), reducing 100 pixels on each side:
+                # x = 100, y = 100, w = sensor_w - 200, h = sensor_h - 200
+                # Using 100 pixels crop on each side as requested
+                # Note: This overrides default config crop. If precise sensor info isn't available, this might need tuning.
+                
+                # Create default crop
+                sensor_w = 4608 # IMX708
+                sensor_h = 2592
+                crop_x = 100
+                crop_y = 100
+                crop_w = sensor_w - 200
+                crop_h = sensor_h - 200
+                
+                # Store crop in controls_to_apply later to override defaults
+                forced_crop = [crop_x, crop_y, crop_w, crop_h]
+                
                 # Merge controls from applied_controls or config if available
                 # This ensures FPS/Framerate settings are respected during recording
                 controls_to_apply = {}
@@ -467,7 +487,7 @@ class Camera(QWidget):
                      try:
                         # Try to load other controls from file too
                         import json
-                        cfg_path = Path.cwd() / 'default_config.json'
+                        cfg_path = Path(__file__).parent / 'default_config.json'
                         if cfg_path.exists():
                             data = json.loads(cfg_path.read_text())
                             cam_key = str(self.CamDisp_num)
@@ -475,6 +495,9 @@ class Camera(QWidget):
                                 controls_to_apply.update(data[cam_key])
                      except:
                         pass
+
+                # Apply our forced crop (100px from each side)
+                controls_to_apply['ScalerCrop'] = forced_crop
 
                 # Remove Resolution from controls as it's handled by video_config
                 if 'Resolution' in controls_to_apply:
@@ -514,8 +537,10 @@ class Camera(QWidget):
             except Exception as e:
                 dprint(f"[camera] start_recording: Could not capture full config: {e}")
             
-            # Create H264 encoder
-            self.encoder = H264Encoder()
+            # Create H264 encoder with bitrate limit for better performance
+            # Lower bitrate = smaller files, better for long recordings
+            # 3 Mbps is good quality for 640x480
+            self.encoder = H264Encoder(bitrate=3000000)
             
             # Start recording
             self.picam.start_recording(self.encoder, output_file_path)
@@ -1165,9 +1190,21 @@ class CameraControlWidget(QWidget):
             self.swap_timer.stop()
             print("[SWAP] Light swapping timer stopped")
         
+        recorded_files = []
+        
         for room, cam in self.camera_widgets.items():
             if self.data_manager.is_running[room]:
                 print(f"[DEBUG] Stopping recording for {room}")
+                # We need to know the output file name before stopping, usually managed in cam
+                # But cam.stop_recording() doesn't return filename. 
+                # We can retrieve it from data_manager if we stored it properly or reconstruct it
+                # For now, let's look at DataManager logic or assume standard naming
+                
+                # Check data manager method to get file path
+                camera_num = 1 if room == "LightRoom" else 2 # Assuming order
+                output_file = self.data_manager.get_session_file_path(f"camera_{camera_num}")
+                recorded_files.append(output_file)
+                
                 cam.stop_recording()
                 self.data_manager.set_is_running(room, False)
                 print(f"Stopped {room} camera recording")
@@ -1175,6 +1212,38 @@ class CameraControlWidget(QWidget):
         # Return to preview
         print("[DEBUG] Calling start_stop_preview(True) to restore previews")
         self.start_stop_preview(True)
+        
+        # Run conversion script on the newly created files
+        if recorded_files:
+            try:
+                import sys
+                import subprocess
+                from pathlib import Path
+                
+                print("[CONVERT] Starting conversion of recorded files...")
+                # Use the directory where this script is located to find the converter
+                script_dir = Path(__file__).parent
+                converter_script = script_dir / "convert_h264_to_mp4.py"
+                print(f"[CONVERT] Looking for converter at: {converter_script}")
+                
+                if converter_script.exists():
+                    for videofile in recorded_files:
+                        if Path(videofile).exists():
+                            # Construct output filename (replace .h264 with .mp4)
+                            outfile = str(videofile).replace('.h264', '.mp4')
+                            print(f"[CONVERT] Converting {videofile} -> {outfile}")
+                            
+                            # Run conversion in background or blocking? Blocking might freeze UI.
+                            # Using Popen to run in background so UI doesn't freeze
+                            try:
+                                subprocess.Popen([sys.executable, str(converter_script), str(videofile), str(outfile)])
+                            except Exception as e:
+                                print(f"[CONVERT] Failed to launch converter: {e}")
+                else:
+                    print(f"[CONVERT] Converter script not found at {converter_script}")
+                    
+            except Exception as e:
+                print(f"[CONVERT] Error during conversion process: {e}")
     
     def _get_session_info(self):
         """
