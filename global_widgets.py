@@ -98,9 +98,9 @@ from pathlib import Path
 
 # Define GPIO pins used for lighting
 PWM_PIN_ROOM1 = 12
-IR_PIN_ROOM1 = 23
+IR_PIN_ROOM1 = 27
 PWM_PIN_ROOM2 = 18
-IR_PIN_ROOM2 = 24
+IR_PIN_ROOM2 = 22
 PWM_FREQ = 5000
 
 
