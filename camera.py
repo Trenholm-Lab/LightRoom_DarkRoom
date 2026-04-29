@@ -794,8 +794,8 @@ class CameraControlWidget(QWidget):
                 white1_layout.addWidget(self.white1_pct_label)
                 
                 self.white1_slider = QSlider(Qt.Horizontal)
-                self.white1_slider.setRange(0, 100)
-                self.white1_slider.setValue(100)  # Start at 100% for Room 1
+                self.white1_slider.setRange(0, 1000)
+                self.white1_slider.setValue(1000)  # Start at 100% for Room 1
                 white1_layout.addWidget(self.white1_slider)
                 controls1_container.addLayout(white1_layout)
                 
@@ -820,13 +820,14 @@ class CameraControlWidget(QWidget):
                             self.white1_slider.setEnabled(False)
                         else:
                             self.white1_slider.setEnabled(True)
-                            self.pwm1.change_duty_cycle(self.white1_slider.value())
+                            self.pwm1.change_duty_cycle(self.white1_slider.value() / 10.0)
                     
                     def white1_duty_changed(val):
-                        self.white1_pct_label.setText(f"{val}%")
+                        duty = val / 10.0
+                        self.white1_pct_label.setText(f"{duty:.1f}%")
                         if self.white1_chk.isChecked():
-                            print(f"[DEBUG] Room 1 slider changed to {val}%, calling change_duty_cycle({val})")
-                            self.pwm1.change_duty_cycle(val)
+                            print(f"[DEBUG] Room 1 slider changed to {duty:.1f}%, calling change_duty_cycle({duty})")
+                            self.pwm1.change_duty_cycle(duty)
                     
                     self.white1_chk.stateChanged.connect(white1_toggled)
                     self.white1_slider.valueChanged.connect(white1_duty_changed)
@@ -835,7 +836,7 @@ class CameraControlWidget(QWidget):
                     
                     # Set initial state: Room 1 White Light ON at 100%
                     white1_toggled(Qt.Checked)
-                    self.white1_pct_label.setText("100%")
+                    self.white1_pct_label.setText("100.0%")
                 except Exception as e:
                     print(f"[GPIO] GPIO setup failed for Room 1: {e}")
                 
@@ -895,7 +896,7 @@ class CameraControlWidget(QWidget):
                 white2_layout.addWidget(self.white2_pct_label)
                 
                 self.white2_slider = QSlider(Qt.Horizontal)
-                self.white2_slider.setRange(0, 100)
+                self.white2_slider.setRange(0, 1000)
                 self.white2_slider.setValue(0)
                 self.white2_slider.setEnabled(False)  # Disable slider since White is OFF initially
                 white2_layout.addWidget(self.white2_slider)
@@ -920,14 +921,15 @@ class CameraControlWidget(QWidget):
                             self.white2_slider.setEnabled(False)
                         else:
                             self.white2_slider.setEnabled(True)
-                            self.pwm2.change_duty_cycle(self.white2_slider.value())
+                            self.pwm2.change_duty_cycle(self.white2_slider.value() / 10.0)
                     
                     def white2_duty_changed(val):
-                        self.white2_pct_label.setText(f"{val}%")
+                        duty = val / 10.0
+                        self.white2_pct_label.setText(f"{duty:.1f}%")
                         if self.white2_chk.isChecked():
-                            print(f"[DEBUG] Room 2 slider changed to {val}%, calling change_duty_cycle({val})")
+                            print(f"[DEBUG] Room 2 slider changed to {duty:.1f}%, calling change_duty_cycle({duty})")
                             try:
-                                self.pwm2.change_duty_cycle(val)
+                                self.pwm2.change_duty_cycle(duty)
                                 print(f"[DEBUG] Room 2 PWM duty cycle changed successfully")
                             except Exception as e:
                                 print(f"[DEBUG] Room 2 PWM change failed: {e}")
