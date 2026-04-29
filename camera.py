@@ -792,7 +792,7 @@ class CameraControlWidget(QWidget):
                 self.white1_spinbox.setSingleStep(0.01)
                 self.white1_spinbox.setDecimals(2)
                 self.white1_spinbox.setSuffix("%")
-                self.white1_spinbox.setFixedWidth(72)
+                self.white1_spinbox.setFixedWidth(82)
                 self.white1_spinbox.setValue(100.0)
                 white1_layout.addWidget(self.white1_spinbox)
                 
@@ -825,23 +825,23 @@ class CameraControlWidget(QWidget):
                         else:
                             self.white1_slider.setEnabled(True)
                             self.white1_spinbox.setEnabled(True)
-                            self.pwm1.change_duty_cycle(self.white1_slider.value() / 10.0)
+                            self.pwm1.change_duty_cycle(self.white1_slider.value() / 100.0)
                     
                     def white1_duty_changed(val):
-                        duty = val / 10.0
+                        duty = val / 100.0
                         self.white1_spinbox.blockSignals(True)
                         self.white1_spinbox.setValue(duty)
                         self.white1_spinbox.blockSignals(False)
                         if self.white1_chk.isChecked():
-                            print(f"[DEBUG] Room 1 slider changed to {duty:.1f}%, calling change_duty_cycle({duty})")
+                            print(f"[DEBUG] Room 1 slider changed to {duty:.2f}%, calling change_duty_cycle({duty})")
                             self.pwm1.change_duty_cycle(duty)
                     
                     def white1_spinbox_changed(spinval):
                         self.white1_slider.blockSignals(True)
-                        self.white1_slider.setValue(round(spinval * 10))
+                        self.white1_slider.setValue(round(spinval * 100))
                         self.white1_slider.blockSignals(False)
                         if self.white1_chk.isChecked():
-                            print(f"[DEBUG] Room 1 spinbox set to {spinval:.1f}%, calling change_duty_cycle({spinval})")
+                            print(f"[DEBUG] Room 1 spinbox set to {spinval:.2f}%, calling change_duty_cycle({spinval})")
                             self.pwm1.change_duty_cycle(spinval)
                     
                     self.white1_chk.stateChanged.connect(white1_toggled)
@@ -909,7 +909,7 @@ class CameraControlWidget(QWidget):
                 self.white2_spinbox.setSingleStep(0.01)
                 self.white2_spinbox.setDecimals(2)
                 self.white2_spinbox.setSuffix("%")
-                self.white2_spinbox.setFixedWidth(72)
+                self.white2_spinbox.setFixedWidth(82)
                 self.white2_spinbox.setValue(0.0)
                 self.white2_spinbox.setEnabled(False)  # Disabled since White is OFF initially
                 white2_layout.addWidget(self.white2_spinbox)
@@ -942,15 +942,15 @@ class CameraControlWidget(QWidget):
                         else:
                             self.white2_slider.setEnabled(True)
                             self.white2_spinbox.setEnabled(True)
-                            self.pwm2.change_duty_cycle(self.white2_slider.value() / 10.0)
+                            self.pwm2.change_duty_cycle(self.white2_slider.value() / 100.0)
                     
                     def white2_duty_changed(val):
-                        duty = val / 10.0
+                        duty = val / 100.0
                         self.white2_spinbox.blockSignals(True)
                         self.white2_spinbox.setValue(duty)
                         self.white2_spinbox.blockSignals(False)
                         if self.white2_chk.isChecked():
-                            print(f"[DEBUG] Room 2 slider changed to {duty:.1f}%, calling change_duty_cycle({duty})")
+                            print(f"[DEBUG] Room 2 slider changed to {duty:.2f}%, calling change_duty_cycle({duty})")
                             try:
                                 self.pwm2.change_duty_cycle(duty)
                                 print(f"[DEBUG] Room 2 PWM duty cycle changed successfully")
@@ -959,10 +959,10 @@ class CameraControlWidget(QWidget):
                     
                     def white2_spinbox_changed(spinval):
                         self.white2_slider.blockSignals(True)
-                        self.white2_slider.setValue(round(spinval * 10))
+                        self.white2_slider.setValue(round(spinval * 100))
                         self.white2_slider.blockSignals(False)
                         if self.white2_chk.isChecked():
-                            print(f"[DEBUG] Room 2 spinbox set to {spinval:.1f}%, calling change_duty_cycle({spinval})")
+                            print(f"[DEBUG] Room 2 spinbox set to {spinval:.2f}%, calling change_duty_cycle({spinval})")
                             try:
                                 self.pwm2.change_duty_cycle(spinval)
                                 print(f"[DEBUG] Room 2 PWM duty cycle changed successfully")
