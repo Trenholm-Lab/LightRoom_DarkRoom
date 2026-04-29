@@ -789,16 +789,16 @@ class CameraControlWidget(QWidget):
                 
                 self.white1_spinbox = QDoubleSpinBox()
                 self.white1_spinbox.setRange(0.0, 100.0)
-                self.white1_spinbox.setSingleStep(0.1)
-                self.white1_spinbox.setDecimals(1)
+                self.white1_spinbox.setSingleStep(0.01)
+                self.white1_spinbox.setDecimals(2)
                 self.white1_spinbox.setSuffix("%")
                 self.white1_spinbox.setFixedWidth(72)
                 self.white1_spinbox.setValue(100.0)
                 white1_layout.addWidget(self.white1_spinbox)
                 
                 self.white1_slider = QSlider(Qt.Horizontal)
-                self.white1_slider.setRange(0, 1000)
-                self.white1_slider.setValue(1000)  # Start at 100% for Room 1
+                self.white1_slider.setRange(0, 10000)
+                self.white1_slider.setValue(10000)  # Start at 100% for Room 1
                 white1_layout.addWidget(self.white1_slider)
                 controls1_container.addLayout(white1_layout)
                 
@@ -906,8 +906,8 @@ class CameraControlWidget(QWidget):
                 
                 self.white2_spinbox = QDoubleSpinBox()
                 self.white2_spinbox.setRange(0.0, 100.0)
-                self.white2_spinbox.setSingleStep(0.1)
-                self.white2_spinbox.setDecimals(1)
+                self.white2_spinbox.setSingleStep(0.01)
+                self.white2_spinbox.setDecimals(2)
                 self.white2_spinbox.setSuffix("%")
                 self.white2_spinbox.setFixedWidth(72)
                 self.white2_spinbox.setValue(0.0)
@@ -915,7 +915,7 @@ class CameraControlWidget(QWidget):
                 white2_layout.addWidget(self.white2_spinbox)
                 
                 self.white2_slider = QSlider(Qt.Horizontal)
-                self.white2_slider.setRange(0, 1000)
+                self.white2_slider.setRange(0, 10000)
                 self.white2_slider.setValue(0)
                 self.white2_slider.setEnabled(False)  # Disable slider since White is OFF initially
                 white2_layout.addWidget(self.white2_slider)
