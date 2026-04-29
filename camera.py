@@ -787,11 +787,14 @@ class CameraControlWidget(QWidget):
                 self.white1_chk.setChecked(True)
                 white1_layout.addWidget(self.white1_chk)
                 
-                # Percentage label for White Lights 1
-                self.white1_pct_label = QLabel("0%")
-                self.white1_pct_label.setMinimumWidth(40)
-                self.white1_pct_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                white1_layout.addWidget(self.white1_pct_label)
+                self.white1_spinbox = QDoubleSpinBox()
+                self.white1_spinbox.setRange(0.0, 100.0)
+                self.white1_spinbox.setSingleStep(0.1)
+                self.white1_spinbox.setDecimals(1)
+                self.white1_spinbox.setSuffix("%")
+                self.white1_spinbox.setFixedWidth(72)
+                self.white1_spinbox.setValue(100.0)
+                white1_layout.addWidget(self.white1_spinbox)
                 
                 self.white1_slider = QSlider(Qt.Horizontal)
                 self.white1_slider.setRange(0, 1000)
@@ -818,25 +821,37 @@ class CameraControlWidget(QWidget):
                         if not enabled:
                             self.pwm1.change_duty_cycle(0)
                             self.white1_slider.setEnabled(False)
+                            self.white1_spinbox.setEnabled(False)
                         else:
                             self.white1_slider.setEnabled(True)
+                            self.white1_spinbox.setEnabled(True)
                             self.pwm1.change_duty_cycle(self.white1_slider.value() / 10.0)
                     
                     def white1_duty_changed(val):
                         duty = val / 10.0
-                        self.white1_pct_label.setText(f"{duty:.1f}%")
+                        self.white1_spinbox.blockSignals(True)
+                        self.white1_spinbox.setValue(duty)
+                        self.white1_spinbox.blockSignals(False)
                         if self.white1_chk.isChecked():
                             print(f"[DEBUG] Room 1 slider changed to {duty:.1f}%, calling change_duty_cycle({duty})")
                             self.pwm1.change_duty_cycle(duty)
                     
+                    def white1_spinbox_changed(spinval):
+                        self.white1_slider.blockSignals(True)
+                        self.white1_slider.setValue(round(spinval * 10))
+                        self.white1_slider.blockSignals(False)
+                        if self.white1_chk.isChecked():
+                            print(f"[DEBUG] Room 1 spinbox set to {spinval:.1f}%, calling change_duty_cycle({spinval})")
+                            self.pwm1.change_duty_cycle(spinval)
+                    
                     self.white1_chk.stateChanged.connect(white1_toggled)
                     self.white1_slider.valueChanged.connect(white1_duty_changed)
+                    self.white1_spinbox.valueChanged.connect(white1_spinbox_changed)
                     
                     print(f"[GPIO] Room 1 Hardware PWM initialized on pin {PWM_PIN_ROOM1}")
                     
                     # Set initial state: Room 1 White Light ON at 100%
                     white1_toggled(Qt.Checked)
-                    self.white1_pct_label.setText("100.0%")
                 except Exception as e:
                     print(f"[GPIO] GPIO setup failed for Room 1: {e}")
                 
@@ -889,11 +904,15 @@ class CameraControlWidget(QWidget):
                 self.white2_chk.setChecked(False)  # Start with White OFF for Room 2
                 white2_layout.addWidget(self.white2_chk)
                 
-                # Percentage label for White Lights 2
-                self.white2_pct_label = QLabel("0%")
-                self.white2_pct_label.setMinimumWidth(40)
-                self.white2_pct_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                white2_layout.addWidget(self.white2_pct_label)
+                self.white2_spinbox = QDoubleSpinBox()
+                self.white2_spinbox.setRange(0.0, 100.0)
+                self.white2_spinbox.setSingleStep(0.1)
+                self.white2_spinbox.setDecimals(1)
+                self.white2_spinbox.setSuffix("%")
+                self.white2_spinbox.setFixedWidth(72)
+                self.white2_spinbox.setValue(0.0)
+                self.white2_spinbox.setEnabled(False)  # Disabled since White is OFF initially
+                white2_layout.addWidget(self.white2_spinbox)
                 
                 self.white2_slider = QSlider(Qt.Horizontal)
                 self.white2_slider.setRange(0, 1000)
@@ -919,13 +938,17 @@ class CameraControlWidget(QWidget):
                         if not enabled:
                             self.pwm2.change_duty_cycle(0)
                             self.white2_slider.setEnabled(False)
+                            self.white2_spinbox.setEnabled(False)
                         else:
                             self.white2_slider.setEnabled(True)
+                            self.white2_spinbox.setEnabled(True)
                             self.pwm2.change_duty_cycle(self.white2_slider.value() / 10.0)
                     
                     def white2_duty_changed(val):
                         duty = val / 10.0
-                        self.white2_pct_label.setText(f"{duty:.1f}%")
+                        self.white2_spinbox.blockSignals(True)
+                        self.white2_spinbox.setValue(duty)
+                        self.white2_spinbox.blockSignals(False)
                         if self.white2_chk.isChecked():
                             print(f"[DEBUG] Room 2 slider changed to {duty:.1f}%, calling change_duty_cycle({duty})")
                             try:
@@ -934,8 +957,21 @@ class CameraControlWidget(QWidget):
                             except Exception as e:
                                 print(f"[DEBUG] Room 2 PWM change failed: {e}")
                     
+                    def white2_spinbox_changed(spinval):
+                        self.white2_slider.blockSignals(True)
+                        self.white2_slider.setValue(round(spinval * 10))
+                        self.white2_slider.blockSignals(False)
+                        if self.white2_chk.isChecked():
+                            print(f"[DEBUG] Room 2 spinbox set to {spinval:.1f}%, calling change_duty_cycle({spinval})")
+                            try:
+                                self.pwm2.change_duty_cycle(spinval)
+                                print(f"[DEBUG] Room 2 PWM duty cycle changed successfully")
+                            except Exception as e:
+                                print(f"[DEBUG] Room 2 PWM change failed: {e}")
+                    
                     self.white2_chk.stateChanged.connect(white2_toggled)
                     self.white2_slider.valueChanged.connect(white2_duty_changed)
+                    self.white2_spinbox.valueChanged.connect(white2_spinbox_changed)
                     
                     print(f"[GPIO] Room 2 Hardware PWM initialized on pin {PWM_PIN_ROOM2}")
                     
