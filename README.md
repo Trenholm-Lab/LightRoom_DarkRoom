@@ -79,9 +79,10 @@ The Session Info tab collects the metadata stored with every recording:
 | Genotype | Free text |
 | Sex | Male / Female / Unknown |
 | Date of Birth | Date picker; the subject's age in days is recorded automatically |
-| Trial # | Set manually - carried over between trials, change it yourself for each new trial |
+| Trial | Free text - `3`, `2b` and `retest` are all valid. Set manually for each trial |
 | Lux in Room 1 | Measured light level (0 is a valid value) |
 | Lux in Room 2 | Measured light level (0 is a valid value) |
+| Comment | Optional. Appended to the end of the file name, e.g. `_habituation` |
 
 - **Every field must be filled in before the first trial.** "Start Recording" is blocked
   until then, and the missing fields are listed for you.
@@ -91,8 +92,10 @@ The Session Info tab collects the metadata stored with every recording:
   change it before each new trial or the next recording will overwrite the previous one
   (the overwrite warning will tell you first).
 - **These fields name your files.** Recordings are saved as
-  `{mouse_id}_{date}_trial{N}`, e.g. `M123_2026-09-21_trial4_camera_1.mp4`. You are never
-  prompted for a file name.
+  `{mouse_id}_{date}_trial{trial}`, with the comment appended when there is one, e.g.
+  `M123_2026-09-21_trial4_camera_1.mp4` or `M123_2026-09-21_trial2b_habituation_camera_1.mp4`.
+  You are never prompted for a file name. Characters that are illegal in file names
+  (spaces, `/ \ : * ? " < > |`) become underscores.
 - "New Mouse" clears the subject fields and resets the trial number to 1.
 
 ### Recording a Session
@@ -127,7 +130,8 @@ The Session Info tab collects the metadata stored with every recording:
 ### Output Files
 
 Each recording session produces, with `{session_name}` built automatically as
-`{mouse_id}_{date}_trial{N}` (e.g. `M123_2026-09-21_trial4`):
+`{mouse_id}_{date}_trial{trial}` plus the optional comment (e.g.
+`M123_2026-09-21_trial4` or `M123_2026-09-21_trial2b_habituation`):
 - `{session_name}_camera_1.mp4` - Converted Video from camera 1
 - `{session_name}_camera_2.mp4` - Converted Video from camera 2
 - `{session_name}_data.txt` - Comprehensive session metadata
@@ -150,7 +154,7 @@ Each recording session produces, with `{session_name}` built automatically as
 The `{session_name}_data.txt` file contains:
 - **Session Information**: Name and save path
 - **Subject Information**: Mouse ID, genotype, sex, date of birth, age at recording
-- **Trial Information**: Trial number, lux in room 1 and room 2
+- **Trial Information**: Trial, lux in room 1 and room 2, comment
 - **Timing Information**: Start/end timestamps, duration, elapsed seconds
 - **Recording Parameters**: Stop method, timer duration, countdown delay
 - **Per-Camera Data**:
@@ -180,9 +184,10 @@ Age at Recording: 244 days
 
 TRIAL INFORMATION
 ------------------------------------------------------------
-Trial #: 3
+Trial: 3
 Lux in Room 1: 320.5
 Lux in Room 2: 0.0
+Comment: habituation
 
 TIMING INFORMATION
 ------------------------------------------------------------
