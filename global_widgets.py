@@ -6,7 +6,7 @@ camera setup dialogs, and save path selection. These widgets are shared
 across the application interface.
 """
 
-from PyQt5.QtCore import Qt, QTime, QTimer, QElapsedTimer, pyqtSignal
+from PyQt5.QtCore import Qt, QDate, QTime, QTimer, QElapsedTimer, pyqtSignal
 from PyQt5.QtWidgets import *
 import sys
 
@@ -101,7 +101,12 @@ PWM_PIN_ROOM1 = 12
 IR_PIN_ROOM1 = 27
 PWM_PIN_ROOM2 = 18
 IR_PIN_ROOM2 = 22
-PWM_FREQ = 5000
+# 25 kHz: above human hearing (was 5000, which sat at the peak of human
+# sensitivity and whined). This is the practical ceiling for an IRLZ44N
+# gated directly from a 3.3 V GPIO - past ~25 kHz the ~1-2 us switching
+# edges start eating the duty cycle. Note mice still hear this; clearing
+# their range (>85 kHz) needs a gate driver IC or analog dimming.
+PWM_FREQ = 100000
 
 
 class SavePathWidget(QWidget):
@@ -142,6 +147,249 @@ class SavePathWidget(QWidget):
             self.path = Path(directory)
             self.directory_edit.setText(str(self.path))
             self.data_manager.set_save_path(self.path)
+
+
+class SessionMetadataWidget(QWidget):
+    """
+    Form for the subject/trial metadata attached to every recording.
+
+    Collects Mouse ID, Genotype, Sex, Date of Birth, Trial #, and the lux level
+    measured in each room. Values are pushed into the data manager as they are
+    edited and persist between trials, so only the fields that actually changed
+    need to be touched before the next recording. The first trial has to have
+    every field filled in - recording is blocked until then.
+
+    Args:
+        data_manager: Global data manager instance
+    """
+
+    NOT_SET_TEXT = "-- not set --"
+    SEX_OPTIONS = ["Male", "Female", "Unknown"]
+    FORM_WIDTH = 620  # keeps the fields a sensible size on a wide window
+
+    def __init__(self, data_manager):
+        super().__init__()
+        self.data_manager = data_manager
+        self._loading = False  # guards against feedback loops while repopulating
+
+        # Edits are applied live but only written to disk once typing settles.
+        self._persist_timer = QTimer(self)
+        self._persist_timer.setSingleShot(True)
+        self._persist_timer.setInterval(1000)
+        self._persist_timer.timeout.connect(self.data_manager.save_session_metadata)
+
+        title = QLabel("Session Info")
+        title.setStyleSheet("font-weight: bold; font-size: 18px;")
+
+        subtitle = QLabel(
+            "Entered once, then carried over between trials. Edit only what "
+            "changed before starting the next recording - every field must be "
+            "filled in before the first trial."
+        )
+        subtitle.setWordWrap(True)
+        subtitle.setStyleSheet("color: gray;")
+        subtitle.setMaximumWidth(self.FORM_WIDTH)
+
+        # --- Subject fields ---
+        self.mouse_id_edit = QLineEdit()
+        self.mouse_id_edit.setPlaceholderText("e.g. M123")
+
+        self.genotype_edit = QLineEdit()
+        self.genotype_edit.setPlaceholderText("e.g. C57BL/6J")
+
+        self.sex_combo = QComboBox()
+        self.sex_combo.addItem(self.NOT_SET_TEXT)
+        self.sex_combo.addItems(self.SEX_OPTIONS)
+
+        self.dob_edit = QDateEdit()
+        self.dob_edit.setCalendarPopup(True)
+        self.dob_edit.setDisplayFormat("yyyy-MM-dd")
+        self.dob_edit.setMinimumDate(QDate(2000, 1, 1))
+        self.dob_edit.setMaximumDate(QDate.currentDate())
+        # The minimum date doubles as the "unset" state.
+        self.dob_edit.setSpecialValueText(self.NOT_SET_TEXT)
+        self.dob_edit.setDate(self.dob_edit.minimumDate())
+
+        # --- Trial fields ---
+        self.trial_spin = QSpinBox()
+        self.trial_spin.setRange(1, 9999)
+        self.trial_spin.setValue(1)
+
+        self.lux1_spin = self._make_lux_spinbox()
+        self.lux2_spin = self._make_lux_spinbox()
+
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignRight)
+        form.addRow("Mouse ID:", self.mouse_id_edit)
+        form.addRow("Genotype:", self.genotype_edit)
+        form.addRow("Sex:", self.sex_combo)
+        form.addRow("Date of Birth:", self.dob_edit)
+        form.addRow("Trial #:", self.trial_spin)
+        form.addRow("Lux in Room 1:", self.lux1_spin)
+        form.addRow("Lux in Room 2:", self.lux2_spin)
+
+        form_container = QWidget()
+        form_container.setLayout(form)
+        form_container.setMaximumWidth(self.FORM_WIDTH)
+
+        self.status_label = QLabel()
+        self.status_label.setWordWrap(True)
+        self.status_label.setMaximumWidth(self.FORM_WIDTH)
+
+        self.new_mouse_btn = QPushButton("New Mouse")
+        self.new_mouse_btn.setToolTip(
+            "Clear the subject fields and reset the trial number to 1."
+        )
+        self.new_mouse_btn.clicked.connect(self.start_new_mouse)
+
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(self.new_mouse_btn)
+        button_layout.addStretch()
+
+        layout = QVBoxLayout()
+        layout.addWidget(title)
+        layout.addWidget(subtitle)
+        layout.addSpacing(10)
+        layout.addWidget(form_container)
+        layout.addSpacing(10)
+        layout.addWidget(self.status_label)
+        layout.addLayout(button_layout)
+        layout.addStretch()
+        self.setLayout(layout)
+
+        # Populate from whatever was carried over, then track edits.
+        self.load_from_data_manager(self.data_manager.session_metadata)
+        self._connect_field_signals()
+        self.data_manager.session_metadata_updated.connect(self.load_from_data_manager)
+
+    def _make_lux_spinbox(self):
+        """Create a lux entry box where the minimum value means 'not set'."""
+        spin = QDoubleSpinBox()
+        spin.setDecimals(1)
+        spin.setRange(-1.0, 200000.0)
+        spin.setSingleStep(1.0)
+        spin.setSuffix(" lux")
+        spin.setSpecialValueText(self.NOT_SET_TEXT)
+        spin.setValue(spin.minimum())
+        return spin
+
+    def _connect_field_signals(self):
+        """Push every edit straight into the data manager."""
+        self.mouse_id_edit.textChanged.connect(self.apply_to_data_manager)
+        self.genotype_edit.textChanged.connect(self.apply_to_data_manager)
+        self.sex_combo.currentIndexChanged.connect(self.apply_to_data_manager)
+        self.dob_edit.dateChanged.connect(self.apply_to_data_manager)
+        self.trial_spin.valueChanged.connect(self.apply_to_data_manager)
+        self.lux1_spin.valueChanged.connect(self.apply_to_data_manager)
+        self.lux2_spin.valueChanged.connect(self.apply_to_data_manager)
+
+    def collect_metadata(self):
+        """
+        Read the form into a metadata dictionary.
+
+        Returns:
+            dict: Unset fields come back as "" (text) or None (numeric)
+        """
+        dob = self.dob_edit.date()
+        dob_str = "" if dob == self.dob_edit.minimumDate() else dob.toString("yyyy-MM-dd")
+
+        sex = "" if self.sex_combo.currentIndex() == 0 else self.sex_combo.currentText()
+
+        lux1 = None if self.lux1_spin.value() == self.lux1_spin.minimum() else self.lux1_spin.value()
+        lux2 = None if self.lux2_spin.value() == self.lux2_spin.minimum() else self.lux2_spin.value()
+
+        return {
+            "mouse_id": self.mouse_id_edit.text().strip(),
+            "genotype": self.genotype_edit.text().strip(),
+            "sex": sex,
+            "date_of_birth": dob_str,
+            "trial_number": self.trial_spin.value(),
+            "lux_room_1": lux1,
+            "lux_room_2": lux2,
+        }
+
+    def apply_to_data_manager(self):
+        """Store the current form values and refresh the completeness status."""
+        if self._loading:
+            return
+        self.data_manager.set_session_metadata(self.collect_metadata(), persist=False)
+        self._persist_timer.start()
+        self.update_status()
+
+    def load_from_data_manager(self, metadata):
+        """
+        Populate the form from stored metadata.
+
+        Args:
+            metadata: Metadata dictionary from the data manager
+        """
+        self._loading = True
+        try:
+            for key, edit in (("mouse_id", self.mouse_id_edit),
+                              ("genotype", self.genotype_edit)):
+                value = str(metadata.get(key) or "")
+                # Skip identical text so the caret stays where the user left it.
+                if edit.text().strip() != value:
+                    edit.setText(value)
+
+            sex = str(metadata.get("sex") or "")
+            index = self.sex_combo.findText(sex) if sex else 0
+            self.sex_combo.setCurrentIndex(index if index >= 0 else 0)
+
+            dob_str = str(metadata.get("date_of_birth") or "")
+            dob = QDate.fromString(dob_str, "yyyy-MM-dd") if dob_str else QDate()
+            self.dob_edit.setDate(dob if dob.isValid() else self.dob_edit.minimumDate())
+
+            try:
+                self.trial_spin.setValue(int(metadata.get("trial_number") or 1))
+            except (TypeError, ValueError):
+                self.trial_spin.setValue(1)
+
+            for key, spin in (("lux_room_1", self.lux1_spin), ("lux_room_2", self.lux2_spin)):
+                value = metadata.get(key)
+                spin.setValue(spin.minimum() if value is None else float(value))
+        finally:
+            self._loading = False
+
+        self.update_status()
+
+    def update_status(self):
+        """Show whether the metadata is complete or which fields are missing."""
+        missing = self.data_manager.get_missing_metadata_fields()
+        if missing:
+            self.status_label.setText("Missing before recording: " + ", ".join(missing))
+            self.status_label.setStyleSheet("color: #b22222; font-weight: bold;")
+        else:
+            session_name = self.data_manager.get_session_name()
+            self.status_label.setText(
+                f"Session info complete - files will be named: {session_name}"
+            )
+            self.status_label.setStyleSheet("color: #2e8b57; font-weight: bold;")
+
+    def start_new_mouse(self):
+        """Clear the subject fields and reset the trial number for a new mouse."""
+        reply = QMessageBox.question(
+            self,
+            "New Mouse",
+            "Clear Mouse ID, Genotype, Sex and Date of Birth, and reset Trial # to 1?\n\n"
+            "Lux values are kept.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        self._loading = True
+        try:
+            self.mouse_id_edit.clear()
+            self.genotype_edit.clear()
+            self.sex_combo.setCurrentIndex(0)
+            self.dob_edit.setDate(self.dob_edit.minimumDate())
+            self.trial_spin.setValue(1)
+        finally:
+            self._loading = False
+
+        self.apply_to_data_manager()
 
 
 class RecordingControlerWidget(QWidget):

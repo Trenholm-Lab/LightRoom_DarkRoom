@@ -22,3 +22,6 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.log
+
+# Session metadata carried over between runs
+last_session_metadata.json

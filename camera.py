@@ -253,12 +253,25 @@ class Camera(QWidget):
                 elif self.rotation == 270:
                     transform = Transform(transpose=1, hflip=1)
                 
-                self.picam_preview_widget = QGlPicamera2(
-                    self.picam, 
-                    parent=self, 
-                    keep_ar=True,
-                    transform=transform
-                )
+                try:
+                    self.picam_preview_widget = QGlPicamera2(
+                        self.picam, 
+                        parent=self, 
+                        keep_ar=True,
+                        transform=transform
+                    )
+                except Exception:
+                    # A QGlPicamera2 that fails during construction (no GL surface,
+                    # for example) is already parented to us and would crash on its
+                    # next resize event. Drop it so the software preview can take over.
+                    self.picam_preview_widget = None
+                    for orphan in self.findChildren(QGlPicamera2):
+                        try:
+                            orphan.setParent(None)
+                            orphan.deleteLater()
+                        except Exception:
+                            pass
+                    raise
                 print(f"[DEBUG] initialize_preview: QGlPicamera2 widget created successfully for Camera {self.CamDisp_num}")
             try:
                 self.picam_preview_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -642,6 +655,11 @@ class CameraControlWidget(QWidget):
         self.camera_widgets = {}
         self.cameras_list = []  # Ordered list of cameras
 
+        # Set by the main window so incomplete metadata can send the user to the
+        # "Session Info" tab
+        self._session_info_tabs = None
+        self._session_info_index = None
+
         for i, room in enumerate(["LightRoom", "DarkRoom"]): 
             if self.data_manager.camera_settings[room]['disp_num'] is not None:
                 # Rotate the second camera (DarkRoom) by 180 degrees
@@ -705,6 +723,17 @@ class CameraControlWidget(QWidget):
 
         self.data_manager.start_stop_toggled_signal.connect(self.start_stop_recording)
     
+    def set_session_info_tab(self, tab_widget, tab_index):
+        """
+        Register the tab holding the session metadata form.
+
+        Args:
+            tab_widget: QTabWidget containing the metadata form
+            tab_index: Index of the metadata tab within that widget
+        """
+        self._session_info_tabs = tab_widget
+        self._session_info_index = tab_index
+
     def set_control_widgets(self, save_path_widget, recording_control_widget):
         """Set control widgets and create the new layout.
         
@@ -1127,6 +1156,9 @@ class CameraControlWidget(QWidget):
         Gets session name and save path, checks for file overwrites, optionally
         shows countdown window, then starts recording on all cameras.
         """
+        if not self._check_session_metadata():
+            return
+        
         session_name, save_path = self._get_session_info()
         
         if not session_name or not save_path:
@@ -1283,10 +1315,42 @@ class CameraControlWidget(QWidget):
             except Exception as e:
                 print(f"[CONVERT] Error during conversion process: {e}")
     
+    def _check_session_metadata(self):
+        """
+        Make sure the subject/trial metadata is filled in before recording.
+
+        Shows what is missing and switches to the "Session Info" tab so the user
+        can complete it.
+
+        Returns:
+            bool: True when every metadata field has a value
+        """
+        missing = self.data_manager.get_missing_metadata_fields()
+        if not missing:
+            return True
+
+        QMessageBox.warning(
+            self,
+            "Incomplete Session Info",
+            "The following session information is missing:\n\n"
+            + "\n".join(f"  - {field}" for field in missing)
+            + "\n\nFill it in on the \"Session Info\" tab before recording."
+        )
+
+        if self._session_info_tabs is not None and self._session_info_index is not None:
+            self._session_info_tabs.setCurrentIndex(self._session_info_index)
+
+        return False
+
     def _get_session_info(self):
         """
-        Show dialog to get session name. Uses the save location already set in data_manager.
-        Returns (session_name, save_path) or (None, None) if cancelled.
+        Build the session name from the subject metadata and use the save
+        location already set in data_manager.
+
+        The name is {mouse_id}_{date}_trial{N} - the user is not prompted for it.
+
+        Returns:
+            tuple: (session_name, save_path), or (None, None) if no save location
         """
         # Check if save path is set
         if not self.data_manager.save_path:
@@ -1297,17 +1361,8 @@ class CameraControlWidget(QWidget):
             )
             return None, None
         
-        # Get the session name
-        session_name, ok = QInputDialog.getText(
-            self,
-            "Session Name",
-            "Enter session name:",
-            QLineEdit.Normal,
-            ""
-        )
-        
-        if not ok or not session_name:
-            return None, None
+        session_name = self.data_manager.get_session_name()
+        print(f"Session name from metadata: {session_name}")
         
         return session_name, str(self.data_manager.save_path)
     
@@ -1356,6 +1411,12 @@ class CameraControlWidget(QWidget):
         # Save comprehensive session data
         self._save_session_data_file(elapsed_seconds)
     
+    def _format_metadata_value(self, value):
+        """Render a metadata value for the session data file, marking unset ones."""
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return "(not set)"
+        return str(value)
+
     def _save_session_data_file(self, elapsed_seconds):
         """
         Save comprehensive recording session data to {session_name}_data.txt in the save directory.
@@ -1385,6 +1446,25 @@ class CameraControlWidget(QWidget):
                 f.write("-"*60 + "\n")
                 f.write(f"Session Name: {self.data_manager.session_name}\n")
                 f.write(f"Save Path: {self.data_manager.save_path}\n\n")
+                
+                # Subject / Trial Metadata
+                metadata = self.data_manager.session_metadata
+                f.write("SUBJECT INFORMATION\n")
+                f.write("-"*60 + "\n")
+                f.write(f"Mouse ID: {self._format_metadata_value(metadata.get('mouse_id'))}\n")
+                f.write(f"Genotype: {self._format_metadata_value(metadata.get('genotype'))}\n")
+                f.write(f"Sex: {self._format_metadata_value(metadata.get('sex'))}\n")
+                f.write(f"Date of Birth: {self._format_metadata_value(metadata.get('date_of_birth'))}\n")
+                age_days = self.data_manager.get_age_in_days()
+                if age_days is not None:
+                    f.write(f"Age at Recording: {age_days} days\n")
+                f.write("\n")
+                
+                f.write("TRIAL INFORMATION\n")
+                f.write("-"*60 + "\n")
+                f.write(f"Trial #: {self._format_metadata_value(metadata.get('trial_number'))}\n")
+                f.write(f"Lux in Room 1: {self._format_metadata_value(metadata.get('lux_room_1'))}\n")
+                f.write(f"Lux in Room 2: {self._format_metadata_value(metadata.get('lux_room_2'))}\n\n")
                 
                 # Timing Information
                 f.write("TIMING INFORMATION\n")

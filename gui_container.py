@@ -54,9 +54,7 @@ class MainWindow(QMainWindow):
         self.camera_widget = CameraControlWidget(self.data_manager)
         self.save_dialog_widget = SavePathWidget(self.data_manager)
         self.recording_control_widget = RecordingControlerWidget(self.data_manager)
-
-        # Pass the control widgets to camera_widget for new layout
-        self.camera_widget.set_control_widgets(self.save_dialog_widget, self.recording_control_widget)
+        self.session_metadata_widget = SessionMetadataWidget(self.data_manager)
 
         self.setWindowTitle("LightRoom-DarkRoom") 
         self.main_window_size_H = self.data_manager.main_window_size['H'] 
@@ -64,10 +62,29 @@ class MainWindow(QMainWindow):
         self.resize(self.main_window_size_W, self.main_window_size_H)
         self.setMinimumSize(int(self.main_window_size_W * 0.6), int(self.main_window_size_H * 0.6))
         
-        central_layout = QVBoxLayout()
+        # Tabbed layout: live recording view plus the subject/trial metadata form.
+        # The camera widget is placed in its final parent before the previews are
+        # created - the GL preview windows do not survive being reparented.
+        self.tabs = QTabWidget()
         self.camera_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        central_layout.addWidget(self.camera_widget, 1)
+        self.tabs.addTab(self.camera_widget, "Recording")
+
+        # The metadata form scrolls so it stays usable on small displays
+        metadata_scroll = QScrollArea()
+        metadata_scroll.setWidgetResizable(True)
+        metadata_scroll.setWidget(self.session_metadata_widget)
+        self.tabs.addTab(metadata_scroll, "Session Info")
+
+        central_layout = QVBoxLayout()
+        central_layout.addWidget(self.tabs, 1)
         self.central_widget.setLayout(central_layout)
+
+        # Let the recording controls jump the user to the metadata form
+        self.camera_widget.set_session_info_tab(self.tabs, self.tabs.indexOf(metadata_scroll))
+
+        # Pass the control widgets to camera_widget for new layout (this also
+        # builds the camera layout and starts the previews)
+        self.camera_widget.set_control_widgets(self.save_dialog_widget, self.recording_control_widget)
 
         self.initialized = True
         

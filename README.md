@@ -19,9 +19,11 @@ A PyQt5-based dual camera recording application for Raspberry Pi using Picamera2
   - Resolution and zoom/crop
   - Frame rate
 - **Configuration Presets**: Save and load camera configurations (JSON files)
+- **Session Info Tab**: Subject and trial metadata (Mouse ID, genotype, sex, date of birth,
+  trial #, lux per room) entered once and carried over between trials
 - **Session Management**: 
-  - User-defined session names
-  - Automatic file naming: `{session_name}_camera_1.h264`, `{session_name}_camera_2.h264`
+  - Automatic file naming from the session metadata - no name is typed
+  - Files are named `{mouse_id}_{date}_trial{N}_camera_1.mp4` and `..._camera_2.mp4`
   - Comprehensive session data logging
 - **File Protection**: Warns before overwriting existing recordings
 - **Resizable Layout**: Adjustable GUI components
@@ -65,13 +67,41 @@ python3 main.py
 1. On first launch, select camera ports for LightRoom and DarkRoom cameras
 2. The preview will start automatically
 
+### Session Info (Subject & Trial Metadata)
+
+The window has two tabs: **Recording** (live previews and controls) and **Session Info**.
+
+The Session Info tab collects the metadata stored with every recording:
+
+| Field | Notes |
+|-------|-------|
+| Mouse ID | Also used to pre-fill the suggested session name |
+| Genotype | Free text |
+| Sex | Male / Female / Unknown |
+| Date of Birth | Date picker; the subject's age in days is recorded automatically |
+| Trial # | Set manually - carried over between trials, change it yourself for each new trial |
+| Lux in Room 1 | Measured light level (0 is a valid value) |
+| Lux in Room 2 | Measured light level (0 is a valid value) |
+
+- **Every field must be filled in before the first trial.** "Start Recording" is blocked
+  until then, and the missing fields are listed for you.
+- **Between trials you only edit what changed.** Everything else is carried over, including
+  across application restarts (stored in `last_session_metadata.json`).
+- The trial number is yours to set. It carries over like every other field, so remember to
+  change it before each new trial or the next recording will overwrite the previous one
+  (the overwrite warning will tell you first).
+- **These fields name your files.** Recordings are saved as
+  `{mouse_id}_{date}_trial{N}`, e.g. `M123_2026-09-21_trial4_camera_1.mp4`. You are never
+  prompted for a file name.
+- "New Mouse" clears the subject fields and resets the trial number to 1.
+
 ### Recording a Session
 
 #### Basic Recording (Manual Mode)
-1. Set the stop method to "Manual" in the Recording Controller
-2. Click "Start Recording"
-3. Choose a save directory
-4. Enter a session name
+1. Fill in the Session Info tab (first trial only - later trials just need the changes)
+2. Choose a save directory with the Browse button
+3. Set the stop method to "Manual" in the Recording Controller
+4. Click "Start Recording" - files are named automatically from the session metadata
 5. Optional: Wait for countdown if recording delay is set
 6. Click "Stop Recording" when finished
 
@@ -79,12 +109,11 @@ python3 main.py
 1. Set the stop method to "Timer" in the Recording Controller
 2. Set the timer duration (1-60 minutes, in 0.5-minute increments)
 3. Click "Start Recording"
-4. Choose save directory and session name
-5. Recording will automatically stop when timer reaches zero, or click "Stop Recording" to end early
+4. Recording will automatically stop when timer reaches zero, or click "Stop Recording" to end early
 
 #### Recording Delay (Countdown)
 - Set recording delay (0-120 seconds) in the Recording Controller
-- After clicking "Start Recording" and selecting save location/name, a countdown will display
+- After clicking "Start Recording", a countdown will display
 - Gives you time to prepare before recording starts
 - Cancel button available during countdown
 
@@ -97,7 +126,8 @@ python3 main.py
 
 ### Output Files
 
-Each recording session produces:
+Each recording session produces, with `{session_name}` built automatically as
+`{mouse_id}_{date}_trial{N}` (e.g. `M123_2026-09-21_trial4`):
 - `{session_name}_camera_1.mp4` - Converted Video from camera 1
 - `{session_name}_camera_2.mp4` - Converted Video from camera 2
 - `{session_name}_data.txt` - Comprehensive session metadata
@@ -119,6 +149,8 @@ Each recording session produces:
 
 The `{session_name}_data.txt` file contains:
 - **Session Information**: Name and save path
+- **Subject Information**: Mouse ID, genotype, sex, date of birth, age at recording
+- **Trial Information**: Trial number, lux in room 1 and room 2
 - **Timing Information**: Start/end timestamps, duration, elapsed seconds
 - **Recording Parameters**: Stop method, timer duration, countdown delay
 - **Per-Camera Data**:
@@ -135,8 +167,22 @@ RECORDING SESSION DATA
 
 SESSION INFORMATION
 ------------------------------------------------------------
-Session Name: experiment_001
+Session Name: M123_trial3
 Save Path: /home/user/recordings
+
+SUBJECT INFORMATION
+------------------------------------------------------------
+Mouse ID: M123
+Genotype: C57BL/6J
+Sex: Female
+Date of Birth: 2025-03-01
+Age at Recording: 244 days
+
+TRIAL INFORMATION
+------------------------------------------------------------
+Trial #: 3
+Lux in Room 1: 320.5
+Lux in Room 2: 0.0
 
 TIMING INFORMATION
 ------------------------------------------------------------
@@ -152,7 +198,7 @@ Recording Delay (Countdown): 20 seconds
 
 CAMERA 1 (LightRoom)
 ------------------------------------------------------------
-Video File: experiment_001_camera_1.h264
+Video File: M123_trial3_camera_1.h264
 Start Time: 14:30:25
 End Time: 14:35:40
 
@@ -168,9 +214,11 @@ Camera Configuration:
 - **main.py**: Application entry point
 - **gui_container.py**: Main window and layout
 - **camera.py**: Camera control and recording logic
-- **global_widgets.py**: Reusable widgets (recording controls, countdown, etc.)
-- **data_manager.py**: Centralized data management and state
+- **global_widgets.py**: Reusable widgets (recording controls, session info form, countdown, etc.)
+- **data_manager.py**: Centralized data management and state, including subject/trial metadata
 - **config.py**: Configuration management
+- **verify_camera_settings.py**: Standalone check that camera controls actually take
+  effect on the sensor and ISP (run with the main application closed)
 
 ## Camera Hardware
 *as listed on the official Pi documentation website*
