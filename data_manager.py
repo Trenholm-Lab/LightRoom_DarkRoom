@@ -15,10 +15,15 @@ SESSION_METADATA_LABELS = {
     "genotype": "Genotype",
     "sex": "Sex",
     "date_of_birth": "Date of Birth",
-    "trial_number": "Trial #",
+    "trial_number": "Trial",
     "lux_room_1": "Lux in Room 1",
     "lux_room_2": "Lux in Room 2",
+    "comment": "Comment",
 }
+
+# Fields that may be left blank. Everything else has to be filled in before a
+# recording can start.
+OPTIONAL_METADATA_FIELDS = {"comment"}
 
 # File used to carry metadata over between application runs.
 SESSION_METADATA_FILE = Path(__file__).parent / "last_session_metadata.json"
@@ -249,9 +254,10 @@ class DataManager(QObject):
             "genotype": "",
             "sex": "",
             "date_of_birth": "",   # "yyyy-MM-dd" or "" when unset
-            "trial_number": 1,
+            "trial_number": "1",   # free text, so "2b" or "retest" also work
             "lux_room_1": None,
             "lux_room_2": None,
+            "comment": "",         # optional, appended to the file name
         }
 
     def set_session_metadata(self, metadata, persist=True):
@@ -283,6 +289,8 @@ class DataManager(QObject):
         """
         missing = []
         for key, label in SESSION_METADATA_LABELS.items():
+            if key in OPTIONAL_METADATA_FIELDS:
+                continue
             value = self.session_metadata.get(key)
             if value is None or (isinstance(value, str) and not value.strip()):
                 missing.append(label)
@@ -338,8 +346,12 @@ class DataManager(QObject):
         """
         Session name used for every file this recording produces.
 
-        Built from the subject metadata as {mouse_id}_{date}_trial{N}, e.g.
-        "M123_2026-09-21_trial4". The user no longer types a name.
+        Built from the subject metadata as {mouse_id}_{date}_trial{trial}, with
+        the comment appended when there is one, e.g.
+        "M123_2026-10-20_trial4" or "M123_2026-10-20_trial2b_habituation".
+
+        The trial is free text, so "2b" or "retest" are as valid as "3". The
+        user never types a file name.
 
         Args:
             date: QDate for the recording (defaults to today)
@@ -353,12 +365,17 @@ class DataManager(QObject):
 
         date_str = (date or QDate.currentDate()).toString("yyyy-MM-dd")
 
-        try:
-            trial = int(self.session_metadata.get("trial_number") or 1)
-        except (TypeError, ValueError):
-            trial = 1
+        trial = self.sanitize_for_filename(self.session_metadata.get("trial_number") or "")
+        if not trial:
+            trial = "1"
 
-        return f"{mouse_id}_{date_str}_trial{trial}"
+        name = f"{mouse_id}_{date_str}_trial{trial}"
+
+        comment = self.sanitize_for_filename(self.session_metadata.get("comment") or "")
+        if comment:
+            name = f"{name}_{comment}"
+
+        return name
 
     def load_session_metadata(self):
         """Load metadata saved by the previous run, ignoring a missing/bad file."""
@@ -368,6 +385,10 @@ class DataManager(QObject):
                 for key in self.session_metadata:
                     if key in stored:
                         self.session_metadata[key] = stored[key]
+                # The trial used to be stored as a number; it is free text now
+                trial = self.session_metadata.get("trial_number")
+                if trial is not None and not isinstance(trial, str):
+                    self.session_metadata["trial_number"] = str(trial)
         except Exception as e:
             print(f"[METADATA] Could not load {SESSION_METADATA_FILE}: {e}")
 

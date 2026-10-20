@@ -1462,9 +1462,10 @@ class CameraControlWidget(QWidget):
                 
                 f.write("TRIAL INFORMATION\n")
                 f.write("-"*60 + "\n")
-                f.write(f"Trial #: {self._format_metadata_value(metadata.get('trial_number'))}\n")
+                f.write(f"Trial: {self._format_metadata_value(metadata.get('trial_number'))}\n")
                 f.write(f"Lux in Room 1: {self._format_metadata_value(metadata.get('lux_room_1'))}\n")
-                f.write(f"Lux in Room 2: {self._format_metadata_value(metadata.get('lux_room_2'))}\n\n")
+                f.write(f"Lux in Room 2: {self._format_metadata_value(metadata.get('lux_room_2'))}\n")
+                f.write(f"Comment: {self._format_metadata_value(metadata.get('comment'))}\n\n")
                 
                 # Timing Information
                 f.write("TIMING INFORMATION\n")

@@ -211,9 +211,13 @@ class SessionMetadataWidget(QWidget):
         self.dob_edit.setDate(self.dob_edit.minimumDate())
 
         # --- Trial fields ---
-        self.trial_spin = QSpinBox()
-        self.trial_spin.setRange(1, 9999)
-        self.trial_spin.setValue(1)
+        # Free text rather than a number, so "2b" or "retest" are usable
+        self.trial_edit = QLineEdit()
+        self.trial_edit.setPlaceholderText("e.g. 1, 2b, retest")
+
+        # Optional, and appended to the end of the file name when present
+        self.comment_edit = QLineEdit()
+        self.comment_edit.setPlaceholderText("optional - added to the end of the file name")
 
         self.lux1_spin = self._make_lux_spinbox()
         self.lux2_spin = self._make_lux_spinbox()
@@ -224,9 +228,10 @@ class SessionMetadataWidget(QWidget):
         form.addRow("Genotype:", self.genotype_edit)
         form.addRow("Sex:", self.sex_combo)
         form.addRow("Date of Birth:", self.dob_edit)
-        form.addRow("Trial #:", self.trial_spin)
+        form.addRow("Trial:", self.trial_edit)
         form.addRow("Lux in Room 1:", self.lux1_spin)
         form.addRow("Lux in Room 2:", self.lux2_spin)
+        form.addRow("Comment:", self.comment_edit)
 
         form_container = QWidget()
         form_container.setLayout(form)
@@ -279,7 +284,8 @@ class SessionMetadataWidget(QWidget):
         self.genotype_edit.textChanged.connect(self.apply_to_data_manager)
         self.sex_combo.currentIndexChanged.connect(self.apply_to_data_manager)
         self.dob_edit.dateChanged.connect(self.apply_to_data_manager)
-        self.trial_spin.valueChanged.connect(self.apply_to_data_manager)
+        self.trial_edit.textChanged.connect(self.apply_to_data_manager)
+        self.comment_edit.textChanged.connect(self.apply_to_data_manager)
         self.lux1_spin.valueChanged.connect(self.apply_to_data_manager)
         self.lux2_spin.valueChanged.connect(self.apply_to_data_manager)
 
@@ -303,9 +309,10 @@ class SessionMetadataWidget(QWidget):
             "genotype": self.genotype_edit.text().strip(),
             "sex": sex,
             "date_of_birth": dob_str,
-            "trial_number": self.trial_spin.value(),
+            "trial_number": self.trial_edit.text().strip(),
             "lux_room_1": lux1,
             "lux_room_2": lux2,
+            "comment": self.comment_edit.text().strip(),
         }
 
     def apply_to_data_manager(self):
@@ -326,7 +333,9 @@ class SessionMetadataWidget(QWidget):
         self._loading = True
         try:
             for key, edit in (("mouse_id", self.mouse_id_edit),
-                              ("genotype", self.genotype_edit)):
+                              ("genotype", self.genotype_edit),
+                              ("trial_number", self.trial_edit),
+                              ("comment", self.comment_edit)):
                 value = str(metadata.get(key) or "")
                 # Skip identical text so the caret stays where the user left it.
                 if edit.text().strip() != value:
@@ -339,11 +348,6 @@ class SessionMetadataWidget(QWidget):
             dob_str = str(metadata.get("date_of_birth") or "")
             dob = QDate.fromString(dob_str, "yyyy-MM-dd") if dob_str else QDate()
             self.dob_edit.setDate(dob if dob.isValid() else self.dob_edit.minimumDate())
-
-            try:
-                self.trial_spin.setValue(int(metadata.get("trial_number") or 1))
-            except (TypeError, ValueError):
-                self.trial_spin.setValue(1)
 
             for key, spin in (("lux_room_1", self.lux1_spin), ("lux_room_2", self.lux2_spin)):
                 value = metadata.get(key)
@@ -371,8 +375,8 @@ class SessionMetadataWidget(QWidget):
         reply = QMessageBox.question(
             self,
             "New Mouse",
-            "Clear Mouse ID, Genotype, Sex and Date of Birth, and reset Trial # to 1?\n\n"
-            "Lux values are kept.",
+            "Clear Mouse ID, Genotype, Sex, Date of Birth and Comment, and "
+            "reset Trial to 1?\n\nLux values are kept.",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No
         )
@@ -385,7 +389,8 @@ class SessionMetadataWidget(QWidget):
             self.genotype_edit.clear()
             self.sex_combo.setCurrentIndex(0)
             self.dob_edit.setDate(self.dob_edit.minimumDate())
-            self.trial_spin.setValue(1)
+            self.trial_edit.setText("1")
+            self.comment_edit.clear()
         finally:
             self._loading = False
 
