@@ -41,7 +41,9 @@ To operate, use modules from the *rpicam-apps* and *Picamera 2* libraries.
 
 Lighting (per room): an IR bank switched by GPIO, and white DuoStrip LEDs driven by an
 analog current sink - Adafruit GP8403 DAC (product 6516, I2C 0x58) -> 3.9 k/1 k divider ->
-OP295 op-amp -> 1 k gate resistor -> IRLZ44N -> 2.0 ohm sense resistor. See
+OP295 op-amp -> the existing gate resistor (R22 room 1 / R20 room 2, any value up to
+2.2 k is fine as-is) -> IRLZ44N -> 2.0 ohm sense resistor. The gate resistor does not enter
+the current equation. See
 `analog_dimming_simulation_check_new.pdf` for the circuit and wiring.
 
 > **The analog dimming conversion has not yet been run on the Pi.** Before using the white
@@ -439,7 +441,7 @@ Use libcamera tuning files to customize camera behavior for specific cameras or 
   enabled, and that `chamber_lights.py` isn't running in another terminal
 - A room is at full brightness whatever the setting: its sense wire (WAGO S -> breadboard) is
   loose or missing
-- A room stays dark: check the op-amp has 5 V on pin 8, and the gate wire / 1 k resistor
+- A room stays dark: check the op-amp has 5 V on pin 8, and the gate wire / gate resistor
 - Don't run `gpio_full_test.py` with the DAC connected - it toggles GPIO 2 and 3, which are
   the I2C pins
 

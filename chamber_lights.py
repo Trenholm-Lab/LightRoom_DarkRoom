@@ -6,7 +6,7 @@ Hardware (see analog_dimming_simulation_check_new.pdf, DuoStrip version):
     Adafruit GP8403 DAC (I2C 0x58, 0-5 V range)
         channel 0 (OUT0) -> room 1     channel 1 (V1) -> room 2
     -> 3.9 k / 1 k divider (+10 uF, 20 Hz low-pass)
-    -> OP295 current-sink loop -> 1 k gate resistor -> IRLZ44N
+    -> OP295 current-sink loop -> existing gate resistor (R22/R20) -> IRLZ44N
     -> 2.0 ohm sense resistor to ground
 
 The LED current is set by the DAC voltage and nothing else:
@@ -54,6 +54,9 @@ except ImportError:
 # ---------------------------------------------------------------------------
 DAC_I2C_BUS = 1
 DAC_ADDRESS = 0x58            # A0-A2 jumpers open
+# The board answers anywhere in this range depending on its address jumpers.
+# The configured address is tried first, then the rest are probed.
+DAC_ADDRESS_CANDIDATES = tuple(range(0x58, 0x60))
 DAC_FULL_SCALE_V = 5.0        # GP8403 0-5 V range. NEVER use the 10 V range.
 DAC_MAX_CODE = 4095           # 12-bit
 DIVIDER_RATIO = (3.9 + 1.0) / 1.0   # 3.9 k over 1 k
@@ -77,6 +80,11 @@ SWEEP_CURRENTS_MA = [0, 1, 2, 3, 4, 5, 7, 10, 15, 20, 30, 40, 50,
 
 LOCK_FILE = "/tmp/chamber_lights.lock"
 
+# Last codes pushed to the DAC. The GP8403 cannot be read back, so without this
+# a fresh process has no idea what the lights are doing - `info` would report 0
+# while the room is lit. Written on every successful push.
+STATE_FILE = "/tmp/chamber_lights_state.json"
+
 # GP8403 registers (from adafruit_gp8403)
 _REG_RANGE = 0x01
 _REG_CH0 = 0x02          # channel 1 follows at 0x04; auto-increment
@@ -90,7 +98,16 @@ _I2C_SLAVE = 0x0703      # ioctl request from <linux/i2c-dev.h>
 class GP8403:
     """Minimal GP8403 driver over /dev/i2c-N. Raises OSError if absent."""
 
-    def __init__(self, bus=DAC_I2C_BUS, address=DAC_ADDRESS):
+    def __init__(self, bus=DAC_I2C_BUS, address=DAC_ADDRESS, reset=True):
+        """
+        Args:
+            bus: /dev/i2c-N number
+            address: Tried first; the rest of DAC_ADDRESS_CANDIDATES is probed
+                     if it does not answer, since the jumpers decide this
+            reset: Zero the outputs and select the 0-5 V range, as Adafruit's
+                   driver does. Pass False to query without disturbing a room
+                   that is already lit.
+        """
         if fcntl is None:
             raise OSError("fcntl not available (not running on Linux)")
         self._lock_fd = None
@@ -99,13 +116,49 @@ class GP8403:
         self._acquire_lock()
         try:
             self._fd = os.open(f"/dev/i2c-{bus}", os.O_RDWR)
-            fcntl.ioctl(self._fd, _I2C_SLAVE, address)
-            # Same order as Adafruit: outputs to 0, then select 0-5 V range.
-            self.set_codes(0, 0)
-            self._write(_REG_RANGE, bytes([_RANGE_5V_DATA]))
+            self.address = self._find_device(address)
+            if reset:
+                # Same order as Adafruit: outputs to 0, then select 0-5 V range.
+                self.set_codes(0, 0)
+                self._write(_REG_RANGE, bytes([_RANGE_5V_DATA]))
         except Exception:
             self.close()
             raise
+
+    def _find_device(self, preferred):
+        """
+        Select the address the DAC actually answers on.
+
+        Probes with a one byte read, which is what i2cdetect uses across this
+        address range. Returns the working address, or raises OSError naming
+        every address tried.
+
+        Args:
+            preferred: Address to try first
+
+        Returns:
+            int: The address that responded
+        """
+        tried = []
+        candidates = [preferred] + [a for a in DAC_ADDRESS_CANDIDATES if a != preferred]
+        for address in candidates:
+            tried.append(f"0x{address:02X}")
+            try:
+                fcntl.ioctl(self._fd, _I2C_SLAVE, address)
+                os.read(self._fd, 1)
+            except OSError:
+                continue
+            if address != preferred:
+                print(f"[Lights] DAC found at 0x{address:02X}, not the configured "
+                      f"0x{preferred:02X}. Set DAC_ADDRESS in chamber_lights.py "
+                      f"to make this permanent.")
+            return address
+
+        raise OSError(
+            "no GP8403 responded at " + ", ".join(tried) +
+            ". Check `i2cdetect -y 1`; if the board answers outside this range, "
+            "set DAC_ADDRESS in chamber_lights.py."
+        )
 
     def _acquire_lock(self):
         self._lock_fd = os.open(LOCK_FILE, os.O_CREAT | os.O_RDWR, 0o666)
@@ -257,7 +310,16 @@ class ChamberLights:
     opened; the object then simulates so the GUI still runs.
     """
 
-    def __init__(self, simulate=False, calibration_file=CALIBRATION_FILE):
+    def __init__(self, simulate=False, calibration_file=CALIBRATION_FILE,
+                 reset=True):
+        """
+        Args:
+            simulate: Skip the hardware and pretend, for development
+            calibration_file: Where the per-room lux calibration lives
+            reset: Turn both rooms off on construction. Pass False to inspect
+                   the lights without changing them - a read-only query must
+                   not end a soak test or black out a running session.
+        """
         self.calibration_file = Path(calibration_file)
         self.calibration = load_calibration(self.calibration_file)
         self._codes = {room: 0 for room in ROOMS}
@@ -267,25 +329,69 @@ class ChamberLights:
             self.error = "simulation requested"
         else:
             try:
-                self.dac = GP8403()
-                print(f"[Lights] GP8403 DAC ready at 0x{DAC_ADDRESS:02X} (0-5 V range)")
+                self.dac = GP8403(reset=reset)
+                print(f"[Lights] GP8403 DAC ready at 0x{self.dac.address:02X} "
+                      f"(0-5 V range)")
             except Exception as e:
                 self.dac = SimulatedDAC()
                 self.error = str(e)
                 print(f"[Lights] DAC NOT available ({e}) - white lights are simulated")
         self.hardware_ok = not isinstance(self.dac, SimulatedDAC)
-        self.off()
+
+        if reset:
+            self.off()
+        else:
+            # Nothing was written, so report whatever the last process pushed
+            self.state_known = self._load_state()
 
     # -- low level ---------------------------------------------------------
     def _push(self):
         self.dac.set_codes(self._codes[1], self._codes[2])
 
     def set_codes(self, codes):
-        """codes: {room: 12-bit code}. Rooms not given keep their value."""
+        """
+        Set per-room DAC codes.
+
+        The stored codes are only updated once the I2C write has gone through.
+        They are what the GUI shows and what `describe()` writes into the
+        session data file, so a failed write must not leave a current recorded
+        that was never delivered.
+
+        Args:
+            codes: {room: 12-bit code}. Rooms not listed keep their value.
+        """
+        previous = dict(self._codes)
         for room, code in codes.items():
             self._check_room(room)
             self._codes[room] = max(0, min(DAC_MAX_CODE, int(code)))
-        self._push()
+        try:
+            self._push()
+        except Exception:
+            self._codes = previous
+            raise
+        self._save_state()
+
+    def _save_state(self):
+        """Record what was last pushed, so another process can report it."""
+        try:
+            with open(STATE_FILE, "w") as f:
+                json.dump({"codes": {str(r): c for r, c in self._codes.items()},
+                           "hardware_ok": self.hardware_ok}, f)
+        except Exception:
+            pass  # a stale or missing state file only affects reporting
+
+    def _load_state(self):
+        """Adopt the codes last pushed by whichever process set them."""
+        try:
+            with open(STATE_FILE) as f:
+                stored = json.load(f).get("codes", {})
+            for room in ROOMS:
+                value = stored.get(str(room))
+                if value is not None:
+                    self._codes[room] = max(0, min(DAC_MAX_CODE, int(value)))
+            return True
+        except Exception:
+            return False
 
     @staticmethod
     def _check_room(room):
@@ -413,12 +519,27 @@ class ChamberLights:
         return None
 
     def info(self):
+        address = self.dac.address if self.hardware_ok else DAC_ADDRESS
         lines = [
-            f"DAC: {'GP8403 at 0x%02X, 0-5 V range' % DAC_ADDRESS if self.hardware_ok else 'NOT available - ' + str(self.error)}",
+            f"DAC: {'GP8403 at 0x%02X, 0-5 V range' % address if self.hardware_ok else 'NOT available - ' + str(self.error)}",
             f"Divider {DIVIDER_RATIO:.2f}:1, sense {SENSE_OHMS} ohm -> "
             f"{MA_PER_CODE:.4f} mA per DAC count, {MAX_CURRENT_MA:.1f} mA full scale",
             f"Calibration file: {self.calibration_file}",
         ]
+
+        # What the lights are doing right now. The GP8403 cannot be read back,
+        # so this comes from whatever process last pushed a value.
+        if getattr(self, "state_known", None) is False:
+            lines.append("Current output: unknown (no process has set the lights "
+                         "since boot, or the state file was cleared)")
+        else:
+            states = []
+            for room in ROOMS:
+                mA = self.current_mA(room)
+                states.append(f"room {room}: {mA:6.2f} mA (code {self.code(room)}, "
+                              f"{mA * SENSE_OHMS:.1f} mV)")
+            lines.append("Current output: " + ";  ".join(states))
+
         for room in ROOMS:
             cal = self.calibration[room]
             status = f"calibrated {cal.date}" if cal.calibrated else "NOT calibrated (simulation estimates)"
@@ -440,10 +561,16 @@ class ChamberLights:
 _lights = None
 
 
-def get_lights():
+def get_lights(reset=True):
+    """
+    Shared ChamberLights instance.
+
+    Args:
+        reset: False for read-only use, so querying does not turn the lights off
+    """
     global _lights
     if _lights is None:
-        _lights = ChamberLights()
+        _lights = ChamberLights(reset=reset)
     return _lights
 
 
@@ -492,7 +619,8 @@ def main(argv=None):
         parser.print_help()
         return 0
 
-    lights = get_lights()
+    # `info` must not disturb a lit room - it has to be usable during a soak
+    lights = get_lights(reset=args.cmd != "info")
     if not lights.hardware_ok and args.cmd != "info":
         print(f"ERROR: DAC not available: {lights.error}")
         return 1
