@@ -63,7 +63,10 @@ DIVIDER_RATIO = (3.9 + 1.0) / 1.0   # 3.9 k over 1 k
 SENSE_OHMS = 2.0              # per room, 2 W
 
 ROOMS = (1, 2)
-ROOM_CHANNEL = {1: 0, 2: 1}   # room -> DAC channel
+# room -> DAC channel. Swapped on 26 Oct 2026: commanding room 2 lit room 1,
+# so the rooms are crossed somewhere between the DAC outputs and the strips.
+# This is the one place that mapping lives - _push() honours it.
+ROOM_CHANNEL = {1: 1, 2: 0}
 
 MA_PER_CODE = DAC_FULL_SCALE_V / DAC_MAX_CODE / DIVIDER_RATIO / SENSE_OHMS * 1000.0
 MAX_CURRENT_MA = DAC_MAX_CODE * MA_PER_CODE   # ~510 mA
@@ -346,7 +349,8 @@ class ChamberLights:
 
     # -- low level ---------------------------------------------------------
     def _push(self):
-        self.dac.set_codes(self._codes[1], self._codes[2])
+        by_channel = {ROOM_CHANNEL[room]: code for room, code in self._codes.items()}
+        self.dac.set_codes(by_channel[0], by_channel[1])
 
     def set_codes(self, codes):
         """
