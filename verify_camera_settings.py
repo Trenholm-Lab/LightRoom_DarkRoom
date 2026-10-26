@@ -48,11 +48,11 @@ except Exception:
 SETTLE_FRAMES = 15
 LENS_SETTLE_FRAMES = 45
 
-# White light PWM channels, matching global_widgets.py. Each camera looks at its
-# own room, so a focus sweep has to light the room that camera can see.
-LIGHT_PWM_CHIP = 0
-LIGHT_PWM_HZ = 25000
-CAMERA_LIGHT_CHANNEL = {0: 0, 1: 2}  # camera index -> PWM channel (GPIO 12 / 18)
+# White lights are driven by the GP8403 DAC current sink (chamber_lights.py).
+# Each camera looks at its own room, so a focus sweep has to light the room
+# that camera can see.
+CAMERA_LIGHT_ROOM = {0: 1, 1: 2}  # camera index -> room
+LIGHT_TEST_MA = 320.0             # ~1000 lux before calibration
 
 # Auto algorithms are disabled in every request, otherwise AE/AWB overwrite the
 # values being tested as soon as they are applied.
@@ -81,34 +81,34 @@ class Result:
 class RoomLight:
     """A room's white light, held on so the image checks have something to see."""
 
-    def __init__(self, enabled, channel=0):
+    def __init__(self, enabled, room=1):
         self.enabled = enabled
-        self.channel = channel
-        self.pwm = None
+        self.room = room
+        self.lights = None
 
     def __enter__(self):
         if not self.enabled:
             print("Lighting: left untouched (--no-light)")
             return self
         try:
-            from rpi_hardware_pwm import HardwarePWM
-            self.pwm = HardwarePWM(pwm_channel=self.channel,
-                                   hz=LIGHT_PWM_HZ, chip=LIGHT_PWM_CHIP)
-            self.pwm.start(100)
-            room = 1 if self.channel == 0 else 2
-            print(f"Lighting: Room {room} white light ON at 100%")
+            from chamber_lights import ChamberLights
+            lights = ChamberLights()
+            if not lights.hardware_ok:
+                raise RuntimeError(lights.error)
+            self.lights = lights
+            mA = lights.set_current_mA(self.room, LIGHT_TEST_MA)
+            print(f"Lighting: Room {self.room} white light ON at {mA:.0f} mA")
             time.sleep(0.5)
         except Exception as e:
-            self.pwm = None
+            self.lights = None
             print(f"Lighting: could not switch the white light on ({e})")
             print("          image checks need light - results may be unreliable")
         return self
 
     def __exit__(self, *exc):
-        if self.pwm is not None:
+        if self.lights is not None:
             try:
-                self.pwm.change_duty_cycle(0)
-                self.pwm.stop()
+                self.lights.close()   # both rooms off, DAC released
                 print("\nLighting: white light off")
             except Exception as e:
                 print(f"\nLighting: error switching the light off: {e}")
@@ -712,7 +712,7 @@ def main():
     if args.sharpness_map:
         for index in indices:
             with RoomLight(enabled=not args.no_light,
-                           channel=CAMERA_LIGHT_CHANNEL.get(index, 0)):
+                           room=CAMERA_LIGHT_ROOM.get(index, 1)):
                 print()
                 sharpness_map(index)
         return 0
@@ -732,7 +732,7 @@ def main():
         for index in indices:
             # Light the room this camera is actually looking at
             with RoomLight(enabled=not args.no_light,
-                           channel=CAMERA_LIGHT_CHANNEL.get(index, 0)):
+                           room=CAMERA_LIGHT_ROOM.get(index, 1)):
                 print()
                 best[index] = focus_sweep(index, roi)
         print("\n" + "=" * 74)
@@ -745,7 +745,7 @@ def main():
 
     all_results = {}
     with RoomLight(enabled=not args.no_light,
-                   channel=CAMERA_LIGHT_CHANNEL.get(indices[0], 0)):
+                   room=CAMERA_LIGHT_ROOM.get(indices[0], 1)):
         print()
         for index in indices:
             try:

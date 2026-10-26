@@ -11,20 +11,11 @@ from PyQt5.QtWidgets import *
 import sys
 
 """
-GPIO handling: Use hardware PWM via rpi-hardware-pwm for PWM pins (12, 18)
-and RPi.GPIO for digital IO. Falls back to mock for non-RPi systems.
+GPIO handling: RPi.GPIO for the IR light pins (digital on/off). Falls back to
+a mock on non-RPi systems. The white lights are no longer on GPIO/PWM - they
+are driven by the GP8403 DAC current sink (see chamber_lights.py).
 """
-_HAVE_HW_PWM = False
 _HAVE_RPI_GPIO = False
-
-# Try to import hardware PWM
-try:
-    from rpi_hardware_pwm import HardwarePWM
-    _HAVE_HW_PWM = True
-    print("[GPIO] rpi-hardware-pwm imported successfully - using hardware PWM")
-except Exception as e:
-    print(f"[GPIO] rpi-hardware-pwm not available: {e}")
-    _HAVE_HW_PWM = False
 
 # Try to import RPi.GPIO for digital IO
 try:
@@ -67,46 +58,15 @@ if not _HAVE_RPI_GPIO:
 
     GPIO = _MockGPIO()
 
-if not _HAVE_HW_PWM:
-    print("[GPIO] Falling back to MOCK Hardware PWM")
-    
-    class HardwarePWM:
-        def __init__(self, pwm_channel, hz, chip=0):
-            self.pwm_channel = pwm_channel
-            self.hz = hz
-            self.chip = chip
-            self._duty = 0
-            print(f"[MockPWM] Created HardwarePWM(channel={pwm_channel}, freq={hz}Hz, chip={chip})")
-
-        def start(self, duty_cycle):
-            self._duty = duty_cycle
-            print(f"[MockPWM] start duty={duty_cycle}%")
-
-        def change_duty_cycle(self, duty_cycle):
-            self._duty = duty_cycle
-            print(f"[MockPWM] duty -> {duty_cycle}%")
-
-        def change_frequency(self, hz):
-            self.hz = hz
-            print(f"[MockPWM] freq -> {hz}Hz")
-
-        def stop(self):
-            print(f"[MockPWM] stopped")
 from data_manager import *
 from picamera2 import Picamera2
 from pathlib import Path
 
-# Define GPIO pins used for lighting
-PWM_PIN_ROOM1 = 12
+# GPIO pins (BCM) for the IR light banks (Q1 / Q4, unchanged).
+# The white lights used to be PWM on GPIO 12 (room 1) and GPIO 18 (room 2);
+# those pins are no longer used - the gate wires now come from the op-amp.
 IR_PIN_ROOM1 = 27
-PWM_PIN_ROOM2 = 18
 IR_PIN_ROOM2 = 22
-# 25 kHz: above human hearing (was 5000, which sat at the peak of human
-# sensitivity and whined). This is the practical ceiling for an IRLZ44N
-# gated directly from a 3.3 V GPIO - past ~25 kHz the ~1-2 us switching
-# edges start eating the duty cycle. Note mice still hear this; clearing
-# their range (>85 kHz) needs a gate driver IC or analog dimming.
-PWM_FREQ = 100000
 
 
 class SavePathWidget(QWidget):
@@ -521,252 +481,6 @@ class RecordingControlerWidget(QWidget):
         else:
             self.swap_interval_widget.hide()
             self.swap_interval_label.hide()
-
-
-class RightColumnWidget(QWidget):
-    """Right column container widget.
-
-    Composes the existing ConfigSetupWidget (load/modify/swap) together with
-    lighting controls for Room 1 and Room 2, and the recording/save widgets.
-    Handles GPIO (or mock) setup for the requested pins and cleans up on exit.
-    """
-
-    def __init__(self, data_manager, config_setup_widget, save_path_widget, recording_widget, parent=None):
-        super().__init__(parent)
-        self.data_manager = data_manager
-        self.config_setup_widget = config_setup_widget
-        self.save_path_widget = save_path_widget
-        self.recording_widget = recording_widget
-
-        # Initialize GPIO pins
-        try:
-            GPIO.setwarnings(False)
-            GPIO.setmode(GPIO.BCM)
-        except Exception:
-            pass
-
-        # Setup digital pins (IR lights)
-        try:
-            GPIO.setup(IR_PIN_ROOM1, GPIO.OUT)
-            GPIO.setup(IR_PIN_ROOM2, GPIO.OUT)
-            print(f"[GPIO] Digital pins initialized for IR lights")
-        except Exception as e:
-            print(f"[GPIO] Error setting up digital pins: {e}")
-
-        # Create Hardware PWM objects
-        # Pin 12 (Room 1) = PWM chip 0, channel 0
-        # Pin 18 (Room 2) = PWM chip 0, channel 2
-        try:
-            self.pwm1 = HardwarePWM(pwm_channel=0, hz=PWM_FREQ, chip=0)
-            self.pwm1.start(0)
-            print(f"[GPIO] Room 1 Hardware PWM initialized on pin {PWM_PIN_ROOM1} (chip0/ch0) at {PWM_FREQ}Hz")
-        except Exception as e:
-            print(f"[GPIO] Error setting up Room 1 Hardware PWM: {e}")
-            self.pwm1 = None
-
-        try:
-            self.pwm2 = HardwarePWM(pwm_channel=2, hz=PWM_FREQ, chip=0)
-            self.pwm2.start(0)
-            print(f"[GPIO] Room 2 Hardware PWM initialized on pin {PWM_PIN_ROOM2} (chip0/ch2) at {PWM_FREQ}Hz")
-        except Exception as e:
-            print(f"[GPIO] GPIO setup failed for Room 2: {e}")
-            self.pwm2 = None
-
-        # Layout
-        layout = QVBoxLayout()
-
-        # Insert the existing ConfigSetupWidget at the top
-        if self.config_setup_widget:
-            # Prevent the config widget from expanding to consume the whole column
-            try:
-                self.config_setup_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-                self.config_setup_widget.setMaximumHeight(int(self.data_manager.main_window_size['H'] * 0.12))
-            except Exception:
-                pass
-            layout.addWidget(self.config_setup_widget)
-
-        # Room 1 lighting group
-        room1_grp = QGroupBox("Room 1 Lights")
-        r1_layout = QGridLayout()
-
-        self.ir1_chk = QCheckBox("IR Lights 1")
-        self.ir1_chk.setChecked(False)
-        self.ir1_chk.stateChanged.connect(self._ir1_toggled)
-        r1_layout.addWidget(self.ir1_chk, 0, 0)
-
-        self.white1_chk = QCheckBox("White Lights 1 (enable PWM)")
-        self.white1_chk.setChecked(True)
-        self.white1_chk.stateChanged.connect(self._white1_toggled)
-        r1_layout.addWidget(self.white1_chk, 1, 0)
-
-        self.white1_slider = QSlider(Qt.Horizontal)
-        self.white1_slider.setRange(0, 100)
-        self.white1_slider.setValue(100)  # Start at 100% for Room 1
-        self.white1_slider.valueChanged.connect(self._white1_duty_changed)
-        r1_layout.addWidget(self.white1_slider, 1, 1)
-
-        room1_grp.setLayout(r1_layout)
-        try:
-            room1_grp.setMinimumHeight(80)
-        except Exception:
-            pass
-        layout.addWidget(room1_grp)
-
-        # Room 2 lighting group
-        room2_grp = QGroupBox("Room 2 Lights")
-        r2_layout = QGridLayout()
-
-        self.ir2_chk = QCheckBox("IR Lights 2")
-        self.ir2_chk.setChecked(True)  # Start with IR ON for Room 2
-        self.ir2_chk.stateChanged.connect(self._ir2_toggled)
-        r2_layout.addWidget(self.ir2_chk, 0, 0)
-
-        self.white2_chk = QCheckBox("White Lights 2 (enable PWM)")
-        self.white2_chk.setChecked(False)  # Start with White OFF for Room 2
-        self.white2_chk.stateChanged.connect(self._white2_toggled)
-        r2_layout.addWidget(self.white2_chk, 1, 0)
-
-        self.white2_slider = QSlider(Qt.Horizontal)
-        self.white2_slider.setRange(0, 100)
-        self.white2_slider.setValue(0)
-        self.white2_slider.setEnabled(False)  # Disable slider since White is OFF initially
-        self.white2_slider.valueChanged.connect(self._white2_duty_changed)
-        r2_layout.addWidget(self.white2_slider, 1, 1)
-
-        room2_grp.setLayout(r2_layout)
-        try:
-            room2_grp.setMinimumHeight(80)
-        except Exception:
-            pass
-        layout.addWidget(room2_grp)
-
-        # Save path widget and recording controls
-        if self.save_path_widget:
-            layout.addWidget(self.save_path_widget)
-
-        if self.recording_widget:
-            layout.addWidget(self.recording_widget)
-
-        layout.addStretch()
-        self.setLayout(layout)
-
-        # Connect to app quit to ensure cleanup
-        try:
-            app = QApplication.instance()
-            if app:
-                app.aboutToQuit.connect(self._cleanup_gpio)
-        except Exception as e:
-            print(f"[GPIO] Error connecting cleanup: {e}")
-
-        # Set initial lighting states
-        # Room 1: White Light ON at 100%
-        self._white1_toggled(Qt.Checked)
-        # Room 2: IR Light ON
-        self._ir2_toggled(Qt.Checked)
-
-    # GPIO control callbacks
-    def _ir1_toggled(self, state):
-        try:
-            value = GPIO.HIGH if state == Qt.Checked else GPIO.LOW
-            GPIO.output(IR_PIN_ROOM1, value)
-        except Exception as e:
-            print(f"[GPIO] Error toggling Room 1 IR: {e}")
-
-    def _white1_toggled(self, state):
-        enabled = (state == Qt.Checked)
-        try:
-            if not enabled and self.pwm1:
-                self.pwm1.change_duty_cycle(0)
-                self.white1_slider.setEnabled(False)
-            else:
-                self.white1_slider.setEnabled(True)
-                if self.pwm1:
-                    duty = self.white1_slider.value()
-                    self.pwm1.change_duty_cycle(duty)
-        except Exception as e:
-            print(f"[GPIO] Error toggling Room 1 White: {e}")
-
-    def _white1_duty_changed(self, val):
-        try:
-            if self.white1_chk.isChecked() and self.pwm1:
-                self.pwm1.change_duty_cycle(val)
-        except Exception:
-            pass
-
-    def _ir2_toggled(self, state):
-        try:
-            value = GPIO.HIGH if state == Qt.Checked else GPIO.LOW
-            GPIO.output(IR_PIN_ROOM2, value)
-        except Exception as e:
-            print(f"[GPIO] Error toggling Room 2 IR: {e}")
-
-    def _white2_toggled(self, state):
-        enabled = (state == Qt.Checked)
-        try:
-            if not enabled and self.pwm2:
-                self.pwm2.change_duty_cycle(0)
-                self.white2_slider.setEnabled(False)
-            else:
-                self.white2_slider.setEnabled(True)
-                if self.pwm2:
-                    duty = self.white2_slider.value()
-                    self.pwm2.change_duty_cycle(duty)
-        except Exception as e:
-            print(f"[GPIO] Error toggling Room 2 White: {e}")
-
-    def _white2_duty_changed(self, val):
-        try:
-            if self.white2_chk.isChecked() and self.pwm2:
-                self.pwm2.change_duty_cycle(val)
-        except Exception:
-            pass
-
-    def _cleanup_gpio(self):
-        """Clean up GPIO pins - turn off all lights and stop PWM."""
-        try:
-            print("[GPIO] Cleaning up GPIO pins...")
-            # Stop hardware PWM
-            if hasattr(self, 'pwm1') and self.pwm1:
-                try:
-                    self.pwm1.change_duty_cycle(0)
-                    self.pwm1.stop()
-                    print("[GPIO] Room 1 Hardware PWM stopped")
-                except Exception as e:
-                    print(f"[GPIO] Error stopping Room 1 PWM: {e}")
-            if hasattr(self, 'pwm2') and self.pwm2:
-                try:
-                    self.pwm2.change_duty_cycle(0)
-                    self.pwm2.stop()
-                    print("[GPIO] Room 2 Hardware PWM stopped")
-                except Exception as e:
-                    print(f"[GPIO] Error stopping Room 2 PWM: {e}")
-            # Turn off IR lights manually before cleanup
-            try:
-                GPIO.setmode(GPIO.BCM)
-                try:
-                    GPIO.output(IR_PIN_ROOM1, GPIO.LOW)
-                    print("[GPIO] Room 1 IR lights turned off")
-                except:
-                    pass  # Already cleaned up
-                try:
-                    GPIO.output(IR_PIN_ROOM2, GPIO.LOW)
-                    print("[GPIO] Room 2 IR lights turned off")
-                except:
-                    pass  # Already cleaned up
-            except Exception as e:
-                print(f"[GPIO] Error turning off IR lights: {e}")
-            # Clean up digital GPIO
-            try:
-                GPIO.cleanup()
-                print("[GPIO] GPIO cleanup completed")
-            except Exception as e:
-                print(f"[GPIO] Error during GPIO cleanup: {e}")
-        except Exception as e:
-            print(f"[GPIO] Error during GPIO cleanup: {e}")
-
-    def closeEvent(self, event):
-        self._cleanup_gpio()
-        event.accept()
 
 
 class CountdownWindow(QDialog):

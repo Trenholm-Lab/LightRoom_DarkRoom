@@ -21,7 +21,8 @@ from pathlib import Path
 import numpy as np
 from data_manager import *
 from config import *
-from global_widgets import RightColumnWidget
+from chamber_lights import ChamberLights
+from light_widgets import RoomLightControls, DEFAULT_WHITE_LUX
 
 # Debug flag: set to True to enable verbose debug prints
 DEBUG = False
@@ -796,94 +797,13 @@ class CameraControlWidget(QWidget):
             separator1.setFrameShadow(QFrame.Sunken)
             controls1_container.addWidget(separator1)
             
-            # Add Room 1 lighting controls
+            # Add Room 1 lighting controls (IR on GPIO, white via DAC current sink)
             try:
-                from global_widgets import RightColumnWidget
-                # IR Lights 1
-                ir1_layout = QHBoxLayout()
-                ir1_layout.setSpacing(5)
-                ir1_layout.setContentsMargins(5, 2, 5, 2)
-                self.ir1_chk = QCheckBox("IR Lights 1")
-                self.ir1_chk.setChecked(False)
-                ir1_layout.addWidget(self.ir1_chk)
-                controls1_container.addLayout(ir1_layout)
-                
-                # White Lights 1
-                white1_layout = QHBoxLayout()
-                white1_layout.setSpacing(5)
-                white1_layout.setContentsMargins(5, 2, 5, 2)
-                self.white1_chk = QCheckBox("White Lights 1")
-                self.white1_chk.setChecked(True)
-                white1_layout.addWidget(self.white1_chk)
-                
-                self.white1_spinbox = QDoubleSpinBox()
-                self.white1_spinbox.setRange(0.0, 100.0)
-                self.white1_spinbox.setSingleStep(0.01)
-                self.white1_spinbox.setDecimals(2)
-                self.white1_spinbox.setSuffix("%")
-                self.white1_spinbox.setFixedWidth(82)
-                self.white1_spinbox.setValue(100.0)
-                white1_layout.addWidget(self.white1_spinbox)
-                
-                self.white1_slider = QSlider(Qt.Horizontal)
-                self.white1_slider.setRange(0, 10000)
-                self.white1_slider.setValue(10000)  # Start at 100% for Room 1
-                white1_layout.addWidget(self.white1_slider)
-                controls1_container.addLayout(white1_layout)
-                
-                # Initialize GPIO for Room 1
-                try:
-                    from global_widgets import GPIO, HardwarePWM, PWM_PIN_ROOM1, IR_PIN_ROOM1, PWM_FREQ
-                    GPIO.setwarnings(False)
-                    GPIO.setmode(GPIO.BCM)
-                    GPIO.setup(IR_PIN_ROOM1, GPIO.OUT)
-                    
-                    # Pin 12 (Room 1) = PWM chip 0, channel 0
-                    self.pwm1 = HardwarePWM(pwm_channel=0, hz=PWM_FREQ, chip=0)
-                    self.pwm1.start(0)
-                    
-                    # Connect signals
-                    self.ir1_chk.stateChanged.connect(lambda state: GPIO.output(IR_PIN_ROOM1, GPIO.HIGH if state == Qt.Checked else GPIO.LOW))
-                    
-                    def white1_toggled(state):
-                        enabled = (state == Qt.Checked)
-                        if not enabled:
-                            self.pwm1.change_duty_cycle(0)
-                            self.white1_slider.setEnabled(False)
-                            self.white1_spinbox.setEnabled(False)
-                        else:
-                            self.white1_slider.setEnabled(True)
-                            self.white1_spinbox.setEnabled(True)
-                            self.pwm1.change_duty_cycle(self.white1_slider.value() / 100.0)
-                    
-                    def white1_duty_changed(val):
-                        duty = val / 100.0
-                        self.white1_spinbox.blockSignals(True)
-                        self.white1_spinbox.setValue(duty)
-                        self.white1_spinbox.blockSignals(False)
-                        if self.white1_chk.isChecked():
-                            print(f"[DEBUG] Room 1 slider changed to {duty:.2f}%, calling change_duty_cycle({duty})")
-                            self.pwm1.change_duty_cycle(duty)
-                    
-                    def white1_spinbox_changed(spinval):
-                        self.white1_slider.blockSignals(True)
-                        self.white1_slider.setValue(round(spinval * 100))
-                        self.white1_slider.blockSignals(False)
-                        if self.white1_chk.isChecked():
-                            print(f"[DEBUG] Room 1 spinbox set to {spinval:.2f}%, calling change_duty_cycle({spinval})")
-                            self.pwm1.change_duty_cycle(spinval)
-                    
-                    self.white1_chk.stateChanged.connect(white1_toggled)
-                    self.white1_slider.valueChanged.connect(white1_duty_changed)
-                    self.white1_spinbox.valueChanged.connect(white1_spinbox_changed)
-                    
-                    print(f"[GPIO] Room 1 Hardware PWM initialized on pin {PWM_PIN_ROOM1}")
-                    
-                    # Set initial state: Room 1 White Light ON at 100%
-                    white1_toggled(Qt.Checked)
-                except Exception as e:
-                    print(f"[GPIO] GPIO setup failed for Room 1: {e}")
-                
+                self._setup_lights()
+                self.room1_lights = RoomLightControls(
+                    1, self.lights, lambda on: self._set_ir(1, on),
+                    ir_on=False, white_on=True, lux=DEFAULT_WHITE_LUX)
+                controls1_container.addWidget(self.room1_lights)
             except Exception as e:
                 print(f"[DEBUG] Room 1 lights creation failed: {e}")
             
@@ -916,99 +836,11 @@ class CameraControlWidget(QWidget):
                 separator.setFrameShadow(QFrame.Sunken)
                 controls2_container.addWidget(separator)
                 
-                # IR Lights 2
-                ir2_layout = QHBoxLayout()
-                ir2_layout.setSpacing(5)
-                ir2_layout.setContentsMargins(5, 2, 5, 2)
-                self.ir2_chk = QCheckBox("IR Lights 2")
-                self.ir2_chk.setChecked(True)  # Start with IR ON for Room 2
-                ir2_layout.addWidget(self.ir2_chk)
-                controls2_container.addLayout(ir2_layout)
-                
-                # White Lights 2
-                white2_layout = QHBoxLayout()
-                white2_layout.setSpacing(5)
-                white2_layout.setContentsMargins(5, 2, 5, 2)
-                self.white2_chk = QCheckBox("White Lights 2")
-                self.white2_chk.setChecked(False)  # Start with White OFF for Room 2
-                white2_layout.addWidget(self.white2_chk)
-                
-                self.white2_spinbox = QDoubleSpinBox()
-                self.white2_spinbox.setRange(0.0, 100.0)
-                self.white2_spinbox.setSingleStep(0.01)
-                self.white2_spinbox.setDecimals(2)
-                self.white2_spinbox.setSuffix("%")
-                self.white2_spinbox.setFixedWidth(82)
-                self.white2_spinbox.setValue(0.0)
-                self.white2_spinbox.setEnabled(False)  # Disabled since White is OFF initially
-                white2_layout.addWidget(self.white2_spinbox)
-                
-                self.white2_slider = QSlider(Qt.Horizontal)
-                self.white2_slider.setRange(0, 10000)
-                self.white2_slider.setValue(0)
-                self.white2_slider.setEnabled(False)  # Disable slider since White is OFF initially
-                white2_layout.addWidget(self.white2_slider)
-                controls2_container.addLayout(white2_layout)
-                
-                # Initialize GPIO for Room 2
-                try:
-                    from global_widgets import GPIO, HardwarePWM, PWM_PIN_ROOM2, IR_PIN_ROOM2, PWM_FREQ
-                    GPIO.setup(IR_PIN_ROOM2, GPIO.OUT)
-                    
-                    # Pin 18 (Room 2) = PWM chip 0, channel 2
-                    self.pwm2 = HardwarePWM(pwm_channel=2, hz=PWM_FREQ, chip=0)
-                    self.pwm2.start(0)
-                    
-                    # Connect signals
-                    self.ir2_chk.stateChanged.connect(lambda state: GPIO.output(IR_PIN_ROOM2, GPIO.HIGH if state == Qt.Checked else GPIO.LOW))
-                    
-                    def white2_toggled(state):
-                        enabled = (state == Qt.Checked)
-                        if not enabled:
-                            self.pwm2.change_duty_cycle(0)
-                            self.white2_slider.setEnabled(False)
-                            self.white2_spinbox.setEnabled(False)
-                        else:
-                            self.white2_slider.setEnabled(True)
-                            self.white2_spinbox.setEnabled(True)
-                            self.pwm2.change_duty_cycle(self.white2_slider.value() / 100.0)
-                    
-                    def white2_duty_changed(val):
-                        duty = val / 100.0
-                        self.white2_spinbox.blockSignals(True)
-                        self.white2_spinbox.setValue(duty)
-                        self.white2_spinbox.blockSignals(False)
-                        if self.white2_chk.isChecked():
-                            print(f"[DEBUG] Room 2 slider changed to {duty:.2f}%, calling change_duty_cycle({duty})")
-                            try:
-                                self.pwm2.change_duty_cycle(duty)
-                                print(f"[DEBUG] Room 2 PWM duty cycle changed successfully")
-                            except Exception as e:
-                                print(f"[DEBUG] Room 2 PWM change failed: {e}")
-                    
-                    def white2_spinbox_changed(spinval):
-                        self.white2_slider.blockSignals(True)
-                        self.white2_slider.setValue(round(spinval * 100))
-                        self.white2_slider.blockSignals(False)
-                        if self.white2_chk.isChecked():
-                            print(f"[DEBUG] Room 2 spinbox set to {spinval:.2f}%, calling change_duty_cycle({spinval})")
-                            try:
-                                self.pwm2.change_duty_cycle(spinval)
-                                print(f"[DEBUG] Room 2 PWM duty cycle changed successfully")
-                            except Exception as e:
-                                print(f"[DEBUG] Room 2 PWM change failed: {e}")
-                    
-                    self.white2_chk.stateChanged.connect(white2_toggled)
-                    self.white2_slider.valueChanged.connect(white2_duty_changed)
-                    self.white2_spinbox.valueChanged.connect(white2_spinbox_changed)
-                    
-                    print(f"[GPIO] Room 2 Hardware PWM initialized on pin {PWM_PIN_ROOM2}")
-                    
-                    # Set initial state: Room 2 IR Light ON
-                    GPIO.output(IR_PIN_ROOM2, GPIO.HIGH)
-                except Exception as e:
-                    print(f"[GPIO] GPIO setup failed for Room 2: {e}")
-                
+                self._setup_lights()
+                self.room2_lights = RoomLightControls(
+                    2, self.lights, lambda on: self._set_ir(2, on),
+                    ir_on=True, white_on=False, lux=DEFAULT_WHITE_LUX)
+                controls2_container.addWidget(self.room2_lights)
             except Exception as e:
                 print(f"[DEBUG] Room 2 lights creation failed: {e}")
             
@@ -1101,39 +933,78 @@ class CameraControlWidget(QWidget):
                 self.room2_label.setText("Room 2 - Dark Room")
                 self.room2_label.setStyleSheet("font-weight: bold; color: darkred; font-size: 18px;")
     
+    # ------------------------------------------------------------------
+    # Lighting: IR banks on GPIO, white lights on the GP8403 DAC current sink
+    # ------------------------------------------------------------------
+    def _setup_lights(self):
+        """Open the DAC and the IR GPIO pins once (safe to call repeatedly)."""
+        if getattr(self, "lights", None) is not None:
+            return
+        from global_widgets import GPIO, IR_PIN_ROOM1, IR_PIN_ROOM2
+        try:
+            GPIO.setwarnings(False)
+            GPIO.setmode(GPIO.BCM)
+            GPIO.setup(IR_PIN_ROOM1, GPIO.OUT)
+            GPIO.setup(IR_PIN_ROOM2, GPIO.OUT)
+            print("[GPIO] IR light pins initialized")
+        except Exception as e:
+            print(f"[GPIO] Error setting up IR pins: {e}")
+
+        self.lights = ChamberLights()
+        if not self.lights.hardware_ok:
+            QTimer.singleShot(0, self._warn_no_dac)
+
+    def _warn_no_dac(self):
+        QMessageBox.warning(
+            self, "White lights not available",
+            "The white-light DAC (GP8403) could not be opened:\n\n"
+            f"{self.lights.error}\n\n"
+            "The program will run, but the white lights cannot be controlled.\n\n"
+            "Check that I2C is enabled (sudo raspi-config > Interface Options > I2C), "
+            "that the STEMMA QT cable is on Pi pins 1/3/5/6, and that "
+            "`i2cdetect -y 1` shows the DAC at 58. If chamber_lights.py is "
+            "running in a terminal, close it and restart this program.")
+
+    def _set_ir(self, room, on):
+        from global_widgets import GPIO, IR_PIN_ROOM1, IR_PIN_ROOM2
+        pin = IR_PIN_ROOM1 if room == 1 else IR_PIN_ROOM2
+        GPIO.output(pin, GPIO.HIGH if on else GPIO.LOW)
+
+    def _describe_lighting(self):
+        """Current light settings for both rooms, for the session data file."""
+        lines = []
+        for room in (1, 2):
+            panel = getattr(self, f"room{room}_lights", None)
+            if panel is not None:
+                lines.append(f"Room {room}: {panel.describe()}")
+        return lines
+
     def swap_lighting_states(self):
         """Swap the lighting states between Room 1 and Room 2."""
-        # Check if both rooms have lighting controls
-        has_room1_lights = hasattr(self, 'ir1_chk') and hasattr(self, 'white1_chk') and hasattr(self, 'white1_slider')
-        has_room2_lights = hasattr(self, 'ir2_chk') and hasattr(self, 'white2_chk') and hasattr(self, 'white2_slider')
-        
-        if not has_room1_lights or not has_room2_lights:
+        room1 = getattr(self, "room1_lights", None)
+        room2 = getattr(self, "room2_lights", None)
+        if room1 is None or room2 is None:
             print("[DEBUG] Cannot swap lights - not all lighting controls available")
             return
-        
-        # Save current states
-        room1_ir_state = self.ir1_chk.isChecked()
-        room1_white_enabled = self.white1_chk.isChecked()
-        room1_white_value = self.white1_slider.value()
-        
-        room2_ir_state = self.ir2_chk.isChecked()
-        room2_white_enabled = self.white2_chk.isChecked()
-        room2_white_value = self.white2_slider.value()
-        
-        print(f"[DEBUG] Swapping lights - Room 1: IR={room1_ir_state}, White={room1_white_enabled}({room1_white_value}%)")
-        print(f"[DEBUG] Swapping lights - Room 2: IR={room2_ir_state}, White={room2_white_enabled}({room2_white_value}%)")
-        
-        # Apply Room 2's state to Room 1
-        self.ir1_chk.setChecked(room2_ir_state)
-        self.white1_chk.setChecked(room2_white_enabled)
-        self.white1_slider.setValue(room2_white_value)
-        
-        # Apply Room 1's state to Room 2
-        self.ir2_chk.setChecked(room1_ir_state)
-        self.white2_chk.setChecked(room1_white_enabled)
-        self.white2_slider.setValue(room1_white_value)
-        
-        print("[DEBUG] Lighting states swapped successfully")
+
+        state1 = room1.state()
+        state2 = room2.state()
+        print(f"[SWAP] Room 1 was {state1}, Room 2 was {state2}")
+
+        # Update the widgets first, then send both white levels to the DAC in
+        # a single I2C write so the two rooms change at the same moment.
+        room1.set_state(apply=False, **state2)
+        room2.set_state(apply=False, **state1)
+        try:
+            self.lights.set_luxes({1: room1.target_lux(), 2: room2.target_lux()})
+        except Exception as e:
+            print(f"[Lights] Error applying swapped white levels: {e}")
+        for panel in (room1, room2):
+            panel.apply_ir()
+            panel.refresh_readout()
+
+        self._swap_count = getattr(self, "_swap_count", 0) + 1
+        print("[SWAP] Lighting states swapped successfully")
     
     def start_stop_recording(self):
         """
@@ -1234,6 +1105,10 @@ class CameraControlWidget(QWidget):
             
             camera_num += 1
         
+        # Record the light settings in force when recording started
+        self._lighting_at_start = self._describe_lighting()
+        self._swap_count = 0
+
         # Start light swapping timer if enabled
         if self.data_manager.swap_lights_enabled:
             interval_ms = self.data_manager.swap_interval * 1000  # Convert to milliseconds
@@ -1484,6 +1359,23 @@ class CameraControlWidget(QWidget):
                 if self.data_manager.stop_method == "Timer" and self.data_manager.timer_duration:
                     f.write(f"Timer Duration: {self.data_manager.timer_duration} minutes\n")
                 f.write(f"Recording Delay (Countdown): {self.data_manager.recording_delay} seconds\n\n")
+
+                # Lighting
+                f.write("LIGHTING\n")
+                f.write("-"*60 + "\n")
+                lighting = getattr(self, "_lighting_at_start", None) or []
+                if lighting:
+                    f.write("At recording start:\n")
+                    for line in lighting:
+                        f.write(f"  {line}\n")
+                else:
+                    f.write("Light settings not recorded\n")
+                if self.data_manager.swap_lights_enabled:
+                    f.write(f"Light swapping: every {self.data_manager.swap_interval} s, "
+                            f"{getattr(self, '_swap_count', 0)} swap(s) performed\n")
+                else:
+                    f.write("Light swapping: off\n")
+                f.write("White lights: GP8403 DAC analog current sink (no PWM)\n\n")
                 
                 # Camera Information
                 camera_num = 1
@@ -1648,54 +1540,34 @@ class CameraControlWidget(QWidget):
                     pass
 
     def cleanup_gpio(self):
-        """Clean up GPIO pins - turn off all lights and stop PWM."""
+        """Turn off all lights (white via DAC, IR via GPIO) and release them."""
+        if getattr(self, "_lights_cleaned_up", False):
+            return
+        self._lights_cleaned_up = True
+        print("[Lights] Turning all lights off...")
+
+        # White lights: DAC to 0 in both rooms and release the I2C device
+        if getattr(self, "lights", None) is not None:
+            try:
+                self.lights.close()
+                print("[Lights] White lights off")
+            except Exception as e:
+                print(f"[Lights] Error turning white lights off: {e}")
+
+        # IR lights
         try:
-            from global_widgets import GPIO
-            print("[GPIO] Cleaning up GPIO pins...")
-            
-            # Turn off Hardware PWM and IR lights for Room 1
-            if hasattr(self, 'pwm1'):
+            from global_widgets import GPIO, IR_PIN_ROOM1, IR_PIN_ROOM2
+            for pin in (IR_PIN_ROOM1, IR_PIN_ROOM2):
                 try:
-                    self.pwm1.change_duty_cycle(0)
-                    self.pwm1.stop()
-                    print("[GPIO] Room 1 Hardware PWM stopped")
-                except Exception as e:
-                    print(f"[GPIO] Error stopping Room 1 PWM: {e}")
-            
-            if hasattr(self, 'ir1_chk'):
-                try:
-                    from global_widgets import IR_PIN_ROOM1
-                    GPIO.setmode(GPIO.BCM)
-                    GPIO.output(IR_PIN_ROOM1, GPIO.LOW)
-                    print("[GPIO] Room 1 IR lights turned off")
-                except:
-                    pass  # Already cleaned up or not set up
-            
-            # Turn off Hardware PWM and IR lights for Room 2
-            if hasattr(self, 'pwm2'):
-                try:
-                    self.pwm2.change_duty_cycle(0)
-                    self.pwm2.stop()
-                    print("[GPIO] Room 2 Hardware PWM stopped")
-                except Exception as e:
-                    print(f"[GPIO] Error stopping Room 2 PWM: {e}")
-            
-            if hasattr(self, 'ir2_chk'):
-                try:
-                    from global_widgets import IR_PIN_ROOM2
-                    GPIO.setmode(GPIO.BCM)
-                    GPIO.output(IR_PIN_ROOM2, GPIO.LOW)
-                    print("[GPIO] Room 2 IR lights turned off")
-                except:
-                    pass  # Already cleaned up or not set up
-            
-            # Clean up GPIO
+                    GPIO.output(pin, GPIO.LOW)
+                except Exception:
+                    pass  # not set up
+            print("[GPIO] IR lights off")
             try:
                 GPIO.cleanup()
                 print("[GPIO] GPIO cleanup completed")
             except Exception as e:
                 print(f"[GPIO] Error during GPIO.cleanup(): {e}")
-                
         except Exception as e:
             print(f"[GPIO] Error during GPIO cleanup: {e}")
     
