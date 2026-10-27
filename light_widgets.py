@@ -20,8 +20,11 @@ from chamber_lights import SENSE_OHMS
 # launch is unchanged. 100 % would be ~510 mA.
 DEFAULT_WHITE_PERCENT = 60.0
 
-# Slider positions per percent: 10 gives 0.1 % resolution over 0-100 %
-_SLIDER_PER_PERCENT = 10
+# Slider positions per percent: 100 gives 0.01 % resolution over 0-100 %.
+# Note the DAC itself steps in ~0.024 % (one of its 4096 counts), so the finest
+# settings move in those steps - the DAC code in the readout shows when the
+# output has actually changed.
+_SLIDER_PER_PERCENT = 100
 _SLIDER_STEPS = 100 * _SLIDER_PER_PERCENT
 
 
@@ -57,10 +60,10 @@ class RoomLightControls(QWidget):
 
         self.pct_spin = QDoubleSpinBox()
         self.pct_spin.setRange(0.0, 100.0)
-        self.pct_spin.setDecimals(1)
+        self.pct_spin.setDecimals(2)
         self.pct_spin.setSuffix(" %")
-        self.pct_spin.setFixedWidth(90)
-        self.pct_spin.setSingleStep(1.0)
+        self.pct_spin.setFixedWidth(100)
+        self.pct_spin.setSingleStep(0.01)
         # Only act on Enter / focus loss, so typing "100" doesn't flash 1, 10
         self.pct_spin.setKeyboardTracking(False)
         white_row.addWidget(self.pct_spin)
@@ -91,7 +94,7 @@ class RoomLightControls(QWidget):
 
     @staticmethod
     def _pos_to_pct(pos):
-        return round(pos / _SLIDER_PER_PERCENT, 1)
+        return round(pos / _SLIDER_PER_PERCENT, 2)
 
     # ------------------------------------------------------------------
     # Widget callbacks
@@ -186,7 +189,7 @@ class RoomLightControls(QWidget):
             white = "off"
         else:
             mA = self.lights.current_mA(self.room)
-            white = (f"ON, {self.pct_spin.value():.1f} % of full scale, "
+            white = (f"ON, {self.pct_spin.value():.2f} % of full scale, "
                      f"{mA:.2f} mA, DAC code {self.lights.code(self.room)}, "
                      f"{mA * SENSE_OHMS:.1f} mV on sense resistor")
         if not self.lights.hardware_ok:
