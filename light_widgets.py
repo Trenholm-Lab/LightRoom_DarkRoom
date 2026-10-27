@@ -2,13 +2,11 @@
 Room lighting panel for the LightRoom/DarkRoom GUI.
 
 One RoomLightControls per room: an IR on/off checkbox (GPIO, unchanged) and
-the white lights, which are now set in lux through the GP8403 DAC current
-sink (see chamber_lights.py). The slider is logarithmic so that 10, 100 and
-1000 lux are all easy to reach; the readout under it shows the LED current
-and DAC code actually being sent.
+the white lights, set as a percent of full-scale LED current through the
+GP8403 DAC current sink (see chamber_lights.py). Percent needs no lux meter
+and no calibration; the readout under the slider shows the LED current and
+DAC code actually being sent, so a meter reading can still be checked.
 """
-
-import math
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QCheckBox, QDoubleSpinBox, QHBoxLayout, QLabel,
@@ -16,31 +14,34 @@ from PyQt5.QtWidgets import (QCheckBox, QDoubleSpinBox, QHBoxLayout, QLabel,
 
 from chamber_lights import SENSE_OHMS
 
-# Lux a room's white light is set to when the GUI starts (if switched on)
-DEFAULT_WHITE_LUX = 1000.0
+# Brightness a room's white light starts at when the GUI opens (if switched
+# on). 60 % is ~306 mA, the level the design was characterised at - the same
+# startup current as the old 1000 lux default, so the MOSFET dissipation on
+# launch is unchanged. 100 % would be ~510 mA.
+DEFAULT_WHITE_PERCENT = 60.0
 
-_SLIDER_STEPS = 1000     # slider positions 1..STEPS are log-spaced
-_SLIDER_MIN_LUX = 1.0    # lux at slider position 1 (position 0 = 0 lux)
+# Slider positions per percent: 10 gives 0.1 % resolution over 0-100 %
+_SLIDER_PER_PERCENT = 10
+_SLIDER_STEPS = 100 * _SLIDER_PER_PERCENT
 
 
 class RoomLightControls(QWidget):
     """
-    IR checkbox + white-light checkbox, lux box, log slider and readout.
+    IR checkbox + white-light checkbox, percent box, slider and readout.
 
     Args:
         room: 1 or 2
         lights: chamber_lights.ChamberLights instance (shared by both rooms)
         ir_setter: callable(bool) that switches this room's IR bank
-        ir_on, white_on, lux: initial state (applied immediately)
+        ir_on, white_on, percent: initial state (applied immediately)
     """
 
     def __init__(self, room, lights, ir_setter, ir_on=False, white_on=False,
-                 lux=DEFAULT_WHITE_LUX, parent=None):
+                 percent=DEFAULT_WHITE_PERCENT, parent=None):
         super().__init__(parent)
         self.room = room
         self.lights = lights
         self._ir_setter = ir_setter
-        self._max_lux = max(1.0, math.floor(lights.max_lux(room)))
 
         layout = QVBoxLayout()
         layout.setSpacing(2)
@@ -54,22 +55,19 @@ class RoomLightControls(QWidget):
         self.white_chk = QCheckBox(f"White Lights {room}")
         white_row.addWidget(self.white_chk)
 
-        self.lux_spin = QDoubleSpinBox()
-        self.lux_spin.setRange(0.0, float(self._max_lux))
-        self.lux_spin.setDecimals(1)
-        self.lux_spin.setSuffix(" lux")
-        self.lux_spin.setFixedWidth(115)
-        # Only act on Enter / focus loss, so typing "1000" doesn't flash 1, 10, 100
-        self.lux_spin.setKeyboardTracking(False)
-        try:
-            self.lux_spin.setStepType(QAbstractSpinBox.AdaptiveDecimalStepType)
-        except AttributeError:
-            self.lux_spin.setSingleStep(1.0)
-        white_row.addWidget(self.lux_spin)
+        self.pct_spin = QDoubleSpinBox()
+        self.pct_spin.setRange(0.0, 100.0)
+        self.pct_spin.setDecimals(1)
+        self.pct_spin.setSuffix(" %")
+        self.pct_spin.setFixedWidth(90)
+        self.pct_spin.setSingleStep(1.0)
+        # Only act on Enter / focus loss, so typing "100" doesn't flash 1, 10
+        self.pct_spin.setKeyboardTracking(False)
+        white_row.addWidget(self.pct_spin)
 
-        self.lux_slider = QSlider(Qt.Horizontal)
-        self.lux_slider.setRange(0, _SLIDER_STEPS)
-        white_row.addWidget(self.lux_slider)
+        self.pct_slider = QSlider(Qt.Horizontal)
+        self.pct_slider.setRange(0, _SLIDER_STEPS)
+        white_row.addWidget(self.pct_slider)
         layout.addLayout(white_row)
 
         self.readout = QLabel()
@@ -79,29 +77,21 @@ class RoomLightControls(QWidget):
 
         self.ir_chk.stateChanged.connect(self._on_ir_changed)
         self.white_chk.stateChanged.connect(self._on_white_changed)
-        self.lux_spin.valueChanged.connect(self._on_spin_changed)
-        self.lux_slider.valueChanged.connect(self._on_slider_changed)
+        self.pct_spin.valueChanged.connect(self._on_spin_changed)
+        self.pct_slider.valueChanged.connect(self._on_slider_changed)
 
-        self.set_state(ir_on, white_on, lux, apply=True)
+        self.set_state(ir_on, white_on, percent, apply=True)
 
     # ------------------------------------------------------------------
-    # Slider <-> lux (log scale)
+    # Slider <-> percent (linear)
     # ------------------------------------------------------------------
-    def _lux_to_pos(self, lux):
-        if lux <= 0:
-            return 0
-        if lux <= _SLIDER_MIN_LUX:
-            return 1
-        frac = math.log(lux / _SLIDER_MIN_LUX) / math.log(self._max_lux / _SLIDER_MIN_LUX)
-        return int(round(1 + frac * (_SLIDER_STEPS - 1)))
+    @staticmethod
+    def _pct_to_pos(percent):
+        return int(round(min(max(percent, 0.0), 100.0) * _SLIDER_PER_PERCENT))
 
-    def _pos_to_lux(self, pos):
-        if pos <= 0:
-            return 0.0
-        frac = (pos - 1) / (_SLIDER_STEPS - 1)
-        lux = _SLIDER_MIN_LUX * (self._max_lux / _SLIDER_MIN_LUX) ** frac
-        # Round to something readable: 0.1 lux below 100, 1 lux above
-        return round(lux, 1) if lux < 100 else float(round(lux))
+    @staticmethod
+    def _pos_to_pct(pos):
+        return round(pos / _SLIDER_PER_PERCENT, 1)
 
     # ------------------------------------------------------------------
     # Widget callbacks
@@ -114,21 +104,21 @@ class RoomLightControls(QWidget):
         self.apply_white()
 
     def _on_spin_changed(self, value):
-        self.lux_slider.blockSignals(True)
-        self.lux_slider.setValue(self._lux_to_pos(value))
-        self.lux_slider.blockSignals(False)
+        self.pct_slider.blockSignals(True)
+        self.pct_slider.setValue(self._pct_to_pos(value))
+        self.pct_slider.blockSignals(False)
         self.apply_white()
 
     def _on_slider_changed(self, pos):
-        self.lux_spin.blockSignals(True)
-        self.lux_spin.setValue(self._pos_to_lux(pos))
-        self.lux_spin.blockSignals(False)
+        self.pct_spin.blockSignals(True)
+        self.pct_spin.setValue(self._pos_to_pct(pos))
+        self.pct_spin.blockSignals(False)
         self.apply_white()
 
     def _update_enabled(self):
         on = self.white_chk.isChecked()
-        self.lux_spin.setEnabled(on)
-        self.lux_slider.setEnabled(on)
+        self.pct_spin.setEnabled(on)
+        self.pct_slider.setEnabled(on)
 
     # ------------------------------------------------------------------
     # Hardware
@@ -141,7 +131,7 @@ class RoomLightControls(QWidget):
 
     def apply_white(self):
         try:
-            self.lights.set_lux(self.room, self.target_lux())
+            self.lights.set_percent(self.room, self.target_percent())
         except Exception as e:
             print(f"[Lights] Error setting room {self.room} white light: {e}")
         self.refresh_readout()
@@ -155,34 +145,33 @@ class RoomLightControls(QWidget):
             self.readout.setText("off (0 mA)")
         else:
             mA = self.lights.current_mA(self.room)
-            text = f"{mA:.2f} mA · DAC code {self.lights.code(self.room)}"
-            if not self.lights.is_calibrated(self.room):
-                text += " · lux not calibrated (estimate)"
-            self.readout.setText(text)
+            self.readout.setText(
+                f"{mA:.2f} mA · DAC code {self.lights.code(self.room)} · "
+                f"{mA * SENSE_OHMS:.0f} mV on sense")
         self.readout.setStyleSheet("color: gray; font-size: 11px;")
 
     # ------------------------------------------------------------------
     # State (used by the light swap and the session log)
     # ------------------------------------------------------------------
-    def target_lux(self):
-        """Lux this room should be at right now (0 when white is off)."""
-        return self.lux_spin.value() if self.white_chk.isChecked() else 0.0
+    def target_percent(self):
+        """Percent this room should be at right now (0 when white is off)."""
+        return self.pct_spin.value() if self.white_chk.isChecked() else 0.0
 
     def state(self):
         return {"ir_on": self.ir_chk.isChecked(),
                 "white_on": self.white_chk.isChecked(),
-                "lux": self.lux_spin.value()}
+                "percent": self.pct_spin.value()}
 
-    def set_state(self, ir_on, white_on, lux, apply=True):
+    def set_state(self, ir_on, white_on, percent, apply=True):
         """Set all widgets at once. With apply=False nothing is sent to the
         hardware (the caller then applies both rooms together)."""
-        widgets = (self.ir_chk, self.white_chk, self.lux_spin, self.lux_slider)
+        widgets = (self.ir_chk, self.white_chk, self.pct_spin, self.pct_slider)
         for w in widgets:
             w.blockSignals(True)
         self.ir_chk.setChecked(bool(ir_on))
         self.white_chk.setChecked(bool(white_on))
-        self.lux_spin.setValue(float(lux))
-        self.lux_slider.setValue(self._lux_to_pos(self.lux_spin.value()))
+        self.pct_spin.setValue(float(percent))
+        self.pct_slider.setValue(self._pct_to_pos(self.pct_spin.value()))
         for w in widgets:
             w.blockSignals(False)
         self._update_enabled()
@@ -197,9 +186,7 @@ class RoomLightControls(QWidget):
             white = "off"
         else:
             mA = self.lights.current_mA(self.room)
-            cal = self.lights.calibration[self.room]
-            cal_txt = f"calibrated {cal.date}" if cal.calibrated else "uncalibrated estimate"
-            white = (f"ON, {self.lux_spin.value():.1f} lux set ({cal_txt}), "
+            white = (f"ON, {self.pct_spin.value():.1f} % of full scale, "
                      f"{mA:.2f} mA, DAC code {self.lights.code(self.room)}, "
                      f"{mA * SENSE_OHMS:.1f} mV on sense resistor")
         if not self.lights.hardware_ok:

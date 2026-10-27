@@ -52,7 +52,7 @@ LENS_SETTLE_FRAMES = 45
 # Each camera looks at its own room, so a focus sweep has to light the room
 # that camera can see.
 CAMERA_LIGHT_ROOM = {0: 1, 1: 2}  # camera index -> room
-LIGHT_TEST_MA = 320.0             # ~1000 lux before calibration
+LIGHT_TEST_MA = 320.0             # ~63 % of full scale
 
 # Auto algorithms are disabled in every request, otherwise AE/AWB overwrite the
 # values being tested as soon as they are applied.

@@ -22,7 +22,7 @@ import numpy as np
 from data_manager import *
 from config import *
 from chamber_lights import ChamberLights
-from light_widgets import RoomLightControls, DEFAULT_WHITE_LUX
+from light_widgets import RoomLightControls, DEFAULT_WHITE_PERCENT
 
 # Debug flag: set to True to enable verbose debug prints
 DEBUG = False
@@ -802,7 +802,7 @@ class CameraControlWidget(QWidget):
                 self._setup_lights()
                 self.room1_lights = RoomLightControls(
                     1, self.lights, lambda on: self._set_ir(1, on),
-                    ir_on=False, white_on=True, lux=DEFAULT_WHITE_LUX)
+                    ir_on=False, white_on=True, percent=DEFAULT_WHITE_PERCENT)
                 controls1_container.addWidget(self.room1_lights)
             except Exception as e:
                 print(f"[DEBUG] Room 1 lights creation failed: {e}")
@@ -839,7 +839,7 @@ class CameraControlWidget(QWidget):
                 self._setup_lights()
                 self.room2_lights = RoomLightControls(
                     2, self.lights, lambda on: self._set_ir(2, on),
-                    ir_on=True, white_on=False, lux=DEFAULT_WHITE_LUX)
+                    ir_on=True, white_on=False, percent=DEFAULT_WHITE_PERCENT)
                 controls2_container.addWidget(self.room2_lights)
             except Exception as e:
                 print(f"[DEBUG] Room 2 lights creation failed: {e}")
@@ -996,7 +996,8 @@ class CameraControlWidget(QWidget):
         room1.set_state(apply=False, **state2)
         room2.set_state(apply=False, **state1)
         try:
-            self.lights.set_luxes({1: room1.target_lux(), 2: room2.target_lux()})
+            self.lights.set_percents({1: room1.target_percent(),
+                                      2: room2.target_percent()})
         except Exception as e:
             print(f"[Lights] Error applying swapped white levels: {e}")
         for panel in (room1, room2):

@@ -25,7 +25,7 @@ A PyQt5-based dual camera recording application for Raspberry Pi using Picamera2
   - Automatic file naming from the session metadata - no name is typed
   - Files are named `{mouse_id}_{date}_trial{N}_camera_1.mp4` and `..._camera_2.mp4`
   - Comprehensive session data logging
-- **Room Lighting**: IR on/off per room, and white light set in **lux** per room through an
+- **Room Lighting**: IR on/off per room, and white light set in **percent** per room through an
   analog current sink (GP8403 DAC + OP295) - no PWM, no flicker, silent
 - **Automatic Light Swapping**: Optionally swap the two rooms' lighting at a fixed interval during recording
 - **File Protection**: Warns before overwriting existing recordings
@@ -46,9 +46,8 @@ OP295 op-amp -> the existing gate resistor (R22 room 1 / R20 room 2, any value u
 the current equation. See
 `analog_dimming_simulation_check_new.pdf` for the circuit and wiring.
 
-> **The analog dimming conversion has not yet been run on the Pi.** Before using the white
-> lights, work through [`PI_HANDOFF.md`](PI_HANDOFF.md): the expected meter readings, the six
-> bench checks from the simulation document, the lux calibration, and four known code gaps.
+> The analog dimming conversion is built and verified on the rig. `analog_dimming_simulation_check_new.pdf`
+> records the circuit, the expected meter readings and the bench checks.
 
 | Function | Pi pin(s) | Notes |
 |---|---|---|
@@ -81,10 +80,7 @@ python3 -c "import picamera2"
    then reboot. `i2cdetect -y 1` should show the DAC at `58`. No extra Python package is
    needed - `chamber_lights.py` talks to `/dev/i2c-1` directly.
 
-4. Calibrate the white lights (once per room, and again after replacing a strip) - see
-   [White Lights](#white-lights-analog-current-sink) below.
-
-5. Run the application:
+4. Run the application:
 ```bash
 python3 main.py
 ```
@@ -244,18 +240,23 @@ Camera Configuration:
 
 ## White Lights (analog current sink)
 
-The white lights are set in **lux**. The program converts lux to LED current with a per-room
-calibration table, then current to a DAC code:
+The white lights are set as a **percent of full-scale LED current**. No lux meter and no
+calibration are involved - percent maps straight to current, and current to a DAC code:
 
     LED current = DAC volts / 4.9 / 2.0 ohm      (0.125 mA per DAC count, 510 mA at full scale)
 
-In the GUI each room has an **IR** checkbox and a **White** checkbox with a lux box and a
-slider (the slider is logarithmic, so 10, 100 and 1000 lux are all easy to hit). Under it is
-the LED current and DAC code actually being sent. Until a room is calibrated the lux values
-are estimates from the simulation (10 / 100 / 1000 lux = 3.2 / 32 / 320 mA) and the readout
-says so. On start-up room 1 is white at 1000 lux and room 2 is IR only; on exit everything is
+    100 % = 510 mA      50 % = 255 mA      10 % = 51 mA      1 % = 5.1 mA
+
+In the GUI each room has an **IR** checkbox and a **White** checkbox with a percent box and a
+linear slider (0.1 % resolution). Under it is the LED current, DAC code and expected sense
+voltage actually being sent, so a meter reading can be checked against it at any time. On
+start-up room 1 is white at 60 % (~306 mA) and room 2 is IR only; on exit everything is
 switched off. The light settings at the start of each recording, and the number of light
 swaps, are written to the session data file under **LIGHTING**.
+
+Note that the **Lux in Room 1 / Room 2** fields on the Session Info tab are something
+different: they record a light level you measured with a meter, for the session metadata.
+They are not connected to the brightness control.
 
 If the DAC can't be opened (I2C off, cable loose, or `chamber_lights.py` running in a
 terminal) the program warns once and keeps running with the white lights simulated.
@@ -265,28 +266,17 @@ terminal) the program warns once and keeps running with the white lights simulat
 Close the GUI first - only one program can drive the DAC at a time.
 
 ```bash
-python3 chamber_lights.py info        # DAC status, mA per count, calibration, 10/100/1000 lux currents
+python3 chamber_lights.py info        # DAC status, mA per count, live output, percent scale
 python3 chamber_lights.py off         # both rooms dark
 python3 chamber_lights.py set 1 300   # room 1 at 300 mA  -> 0.60 V across its 2.0 ohm
 python3 chamber_lights.py set 1 30    # room 1 at 30 mA   -> 60 mV
-python3 chamber_lights.py lux 2 10    # room 2 at 10 lux (through its calibration)
-python3 chamber_lights.py sweep 1     # calibrate room 1 with the lux meter
+python3 chamber_lights.py pct 2 25    # room 2 at 25 % of full scale (~128 mA)
 ```
 
-The DAC keeps its value after the command exits, so `set` and `lux` leave the light on until
-`off` is run or the GUI is started. Interactive use also works:
-`python3 -i chamber_lights.py`, then `off()`, `set_current_mA(1, 300)`, `set_lux(1, 10)`,
-`sweep(1)`.
-
-### Calibrating (`sweep`)
-
-1. Close the GUI. Put the lux meter at the usual spot on the floor and close the chamber.
-2. `python3 chamber_lights.py sweep 1`. The program steps the room through currents from
-   0 to 500 mA (the other room is switched off). At each step type the lux reading and press
-   Enter; press Enter alone to skip a step, `q` to stop early.
-3. It prints the resulting currents for 10 / 100 / 1000 lux and asks whether to save.
-   Calibrations are stored in `light_calibration.json` next to the code.
-4. Repeat for room 2, then restart the GUI.
+The DAC keeps its value after the command exits, so `set` and `pct` leave the light on until
+`off` is run or the GUI is started. `info` is read-only and will not disturb a lit room.
+Interactive use also works: `python3 -i chamber_lights.py`, then `off()`,
+`set_current_mA(1, 300)`, `set_percent(1, 25)`.
 
 ### Bench checks after wiring (from the simulation document)
 
@@ -301,9 +291,9 @@ The DAC keeps its value after the command exits, so `set` and `lux` leave the li
 - **camera.py**: Camera control and recording logic
 - **global_widgets.py**: Reusable widgets (recording controls, session info form, countdown, etc.)
   and the IR GPIO pin definitions
-- **chamber_lights.py**: White-light driver for the GP8403 DAC current sink: current/lux
-  conversion, calibration (`light_calibration.json`) and the command-line tool
-- **light_widgets.py**: The per-room lighting panel (IR, white lux box/slider, current readout)
+- **chamber_lights.py**: White-light driver for the GP8403 DAC current sink: percent/current
+  conversion and the command-line tool
+- **light_widgets.py**: The per-room lighting panel (IR, white percent box/slider, readout)
 - **data_manager.py**: Centralized data management and state, including subject/trial metadata
 - **config.py**: Configuration management
 - **verify_camera_settings.py**: Standalone check that camera controls actually take
@@ -442,8 +432,8 @@ Use libcamera tuning files to customize camera behavior for specific cameras or 
 - A room is at full brightness whatever the setting: its sense wire (WAGO S -> breadboard) is
   loose or missing
 - A room stays dark: check the op-amp has 5 V on pin 8, and the gate wire / gate resistor
-- Don't run `gpio_full_test.py` with the DAC connected - it toggles GPIO 2 and 3, which are
-  the I2C pins
+- The MOSFETs run warm: they are linear current sinks, so they dissipate
+  (24 V - LED string voltage) x current continuously. They need their heatsinks fitted
 
 ### Performance
 - Disable preview during recording for best performance

@@ -13,9 +13,8 @@ The LED current is set by the DAC voltage and nothing else:
 
     I_LED = V_dac / 4.9 / 2.0 ohm        (5.00 V -> 510 mA)
 
-so one DAC count (5 V / 4095) is ~0.125 mA. Lux is not exactly
-proportional to current, so each room keeps a small calibration table of
-(current, measured lux) points made with sweep() and a lux meter.
+so one DAC count (5 V / 4095) is ~0.125 mA. Brightness is set as a percent
+of full scale (100 % = ~510 mA), which needs no lux meter and no calibration.
 
 The DAC is driven directly through /dev/i2c-1 - no extra Python packages are
 needed (I2C must be enabled with raspi-config). The register protocol is the
@@ -23,11 +22,10 @@ one used by Adafruit's adafruit_gp8403 library.
 
 Command line (close the GUI first - only one program may drive the DAC):
 
-    python3 chamber_lights.py info            # constants, calibration, DAC status
+    python3 chamber_lights.py info            # constants and DAC status
     python3 chamber_lights.py off             # both rooms dark
     python3 chamber_lights.py set 1 300       # room 1 at 300 mA
-    python3 chamber_lights.py lux 2 10        # room 2 at 10 lux (calibrated)
-    python3 chamber_lights.py sweep 1         # calibrate room 1 with a lux meter
+    python3 chamber_lights.py pct 2 25        # room 2 at 25 % of full scale
 
 or interactively:  python3 -i chamber_lights.py   then   set_current_mA(1, 30)
 
@@ -63,23 +61,17 @@ DIVIDER_RATIO = (3.9 + 1.0) / 1.0   # 3.9 k over 1 k
 SENSE_OHMS = 2.0              # per room, 2 W
 
 ROOMS = (1, 2)
-# room -> DAC channel. Swapped on 26 Oct 2026: commanding room 2 lit room 1,
-# so the rooms are crossed somewhere between the DAC outputs and the strips.
-# This is the one place that mapping lives - _push() honours it.
+# room -> DAC channel. Established on the bench 26 Oct 2026 by driving one
+# channel at a time and seeing which chamber lit:
+#   channel 0 (OUT0/V0) -> OP295 half A (pin 3 in, pin 1 out) -> chamber "room 2"
+#   channel 1 (V1)      -> OP295 half B (pin 5 in, pin 7 out) -> chamber "room 1"
+# Note image.png labels half A as "room 1"; the physical chambers are the other
+# way round. This constant is the single place the mapping lives - _push()
+# honours it, so correct it here if the wiring is ever changed.
 ROOM_CHANNEL = {1: 1, 2: 0}
 
 MA_PER_CODE = DAC_FULL_SCALE_V / DAC_MAX_CODE / DIVIDER_RATIO / SENSE_OHMS * 1000.0
 MAX_CURRENT_MA = DAC_MAX_CODE * MA_PER_CODE   # ~510 mA
-
-CALIBRATION_FILE = Path(__file__).resolve().with_name("light_calibration.json")
-
-# Starting estimates from the simulation document (320 / 32 / 3.2 mA for
-# 1000 / 100 / 10 lux). Replace by running sweep() for each room.
-DEFAULT_POINTS = [(0.0, 0.0), (3.2, 10.0), (32.0, 100.0), (320.0, 1000.0)]
-
-# Currents visited by sweep(), in mA
-SWEEP_CURRENTS_MA = [0, 1, 2, 3, 4, 5, 7, 10, 15, 20, 30, 40, 50,
-                     75, 100, 150, 200, 300, 400, 500]
 
 LOCK_FILE = "/tmp/chamber_lights.lock"
 
@@ -213,84 +205,21 @@ class SimulatedDAC:
 
 
 # ---------------------------------------------------------------------------
-# Calibration (current <-> lux) per room
+# Percent of full scale
 # ---------------------------------------------------------------------------
-def _interp(x, xs, ys):
-    """Piecewise-linear interpolation; proportional extrapolation above."""
-    if x <= xs[0]:
-        return ys[0]
-    for i in range(1, len(xs)):
-        if x <= xs[i]:
-            x0, x1, y0, y1 = xs[i - 1], xs[i], ys[i - 1], ys[i]
-            return y0 + (y1 - y0) * (x - x0) / (x1 - x0)
-    # Above the last point: scale through the origin from the last point
-    return ys[-1] * x / xs[-1] if xs[-1] > 0 else ys[-1]
+# Brightness is set as a percentage of the maximum LED current, so no lux
+# meter or calibration is needed. 100 % is MAX_CURRENT_MA (~510 mA).
 
 
-def clean_points(points):
-    """Sort by current and keep only points whose lux strictly increases."""
-    pts = sorted((float(m), float(l)) for m, l in points)
-    if not pts or pts[0][0] > 0:
-        pts.insert(0, (0.0, 0.0))
-    kept = [pts[0]]
-    for m, l in pts[1:]:
-        if m > kept[-1][0] and l > kept[-1][1]:
-            kept.append((m, l))
-    return kept
+def percent_to_mA(percent):
+    """Convert a 0-100 % brightness setting to LED current in mA."""
+    percent = min(max(float(percent), 0.0), 100.0)
+    return percent / 100.0 * MAX_CURRENT_MA
 
 
-class RoomCalibration:
-    def __init__(self, points=None, calibrated=False, date=None):
-        self.points = clean_points(points or DEFAULT_POINTS)
-        self.calibrated = calibrated
-        self.date = date
-        if len(self.points) < 2:
-            self.points = clean_points(DEFAULT_POINTS)
-            self.calibrated = False
-
-    def lux_to_mA(self, lux):
-        if lux <= 0:
-            return 0.0
-        m = [p[0] for p in self.points]
-        l = [p[1] for p in self.points]
-        return _interp(lux, l, m)
-
-    def mA_to_lux(self, mA):
-        if mA <= 0:
-            return 0.0
-        m = [p[0] for p in self.points]
-        l = [p[1] for p in self.points]
-        return _interp(mA, m, l)
-
-    def to_dict(self):
-        return {"points_mA_lux": [list(p) for p in self.points],
-                "calibrated": self.calibrated, "date": self.date}
-
-
-def load_calibration(path=CALIBRATION_FILE):
-    cal = {room: RoomCalibration() for room in ROOMS}
-    try:
-        with open(path) as f:
-            data = json.load(f)
-        for room in ROOMS:
-            entry = data.get(f"room_{room}")
-            if entry:
-                cal[room] = RoomCalibration(entry.get("points_mA_lux"),
-                                            bool(entry.get("calibrated")),
-                                            entry.get("date"))
-    except FileNotFoundError:
-        pass
-    except Exception as e:
-        print(f"[Lights] Could not read {path} ({e}); using estimates")
-    return cal
-
-
-def save_calibration(cal, path=CALIBRATION_FILE):
-    data = {f"room_{room}": cal[room].to_dict() for room in ROOMS}
-    data["_note"] = ("Measured (current mA, floor lux) pairs per room, made with "
-                     "chamber_lights.py sweep. Edit by re-running the sweep.")
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2)
+def mA_to_percent(mA):
+    """Convert an LED current in mA back to percent of full scale."""
+    return 100.0 * float(mA) / MAX_CURRENT_MA
 
 
 # ---------------------------------------------------------------------------
@@ -313,18 +242,14 @@ class ChamberLights:
     opened; the object then simulates so the GUI still runs.
     """
 
-    def __init__(self, simulate=False, calibration_file=CALIBRATION_FILE,
-                 reset=True):
+    def __init__(self, simulate=False, reset=True):
         """
         Args:
             simulate: Skip the hardware and pretend, for development
-            calibration_file: Where the per-room lux calibration lives
             reset: Turn both rooms off on construction. Pass False to inspect
                    the lights without changing them - a read-only query must
                    not end a soak test or black out a running session.
         """
-        self.calibration_file = Path(calibration_file)
-        self.calibration = load_calibration(self.calibration_file)
         self._codes = {room: 0 for room in ROOMS}
         self.error = None
         if simulate:
@@ -385,12 +310,23 @@ class ChamberLights:
             pass  # a stale or missing state file only affects reporting
 
     def _load_state(self):
-        """Adopt the codes last pushed by whichever process set them."""
+        """
+        Adopt the codes last pushed by whichever process set them.
+
+        State written by a simulated run says nothing about the hardware (and
+        vice versa), so it is ignored unless it was written in the same mode.
+
+        Returns:
+            bool: True if the stored state applies and was adopted
+        """
         try:
             with open(STATE_FILE) as f:
-                stored = json.load(f).get("codes", {})
+                stored = json.load(f)
+            if bool(stored.get("hardware_ok")) != bool(self.hardware_ok):
+                return False
+            codes = stored.get("codes", {})
             for room in ROOMS:
-                value = stored.get(str(room))
+                value = codes.get(str(room))
                 if value is not None:
                     self._codes[room] = max(0, min(DAC_MAX_CODE, int(value)))
             return True
@@ -420,29 +356,19 @@ class ChamberLights:
         self._check_room(room)
         return self._codes[room]
 
-    # -- lux ---------------------------------------------------------------
-    def lux_to_mA(self, room, lux):
+    # -- percent -----------------------------------------------------------
+    def set_percent(self, room, percent):
+        """Set a room's brightness as a percent of full scale. Returns mA set."""
+        return self.set_current_mA(room, percent_to_mA(percent))
+
+    def set_percents(self, percents):
+        """Set several rooms at once, e.g. {1: 100, 2: 0} (one I2C write)."""
+        self.set_currents_mA({room: percent_to_mA(p) for room, p in percents.items()})
+
+    def percent(self, room):
+        """A room's current brightness as a percent of full scale."""
         self._check_room(room)
-        return self.calibration[room].lux_to_mA(lux)
-
-    def mA_to_lux(self, room, mA):
-        self._check_room(room)
-        return self.calibration[room].mA_to_lux(mA)
-
-    def max_lux(self, room):
-        return self.mA_to_lux(room, MAX_CURRENT_MA)
-
-    def is_calibrated(self, room):
-        self._check_room(room)
-        return self.calibration[room].calibrated
-
-    def set_lux(self, room, lux):
-        """Set a room by lux through its calibration. Returns mA set."""
-        return self.set_current_mA(room, self.lux_to_mA(room, lux))
-
-    def set_luxes(self, luxes):
-        """Set several rooms by lux at once, e.g. {1: 1000, 2: 0}."""
-        self.set_currents_mA({room: self.lux_to_mA(room, lux) for room, lux in luxes.items()})
+        return mA_to_percent(self.current_mA(room))
 
     # -- off / close -------------------------------------------------------
     def off(self, room=None):
@@ -456,106 +382,37 @@ class ChamberLights:
         finally:
             self.dac.close()
 
-    def reload_calibration(self):
-        self.calibration = load_calibration(self.calibration_file)
-
-    # -- calibration -------------------------------------------------------
-    def sweep(self, room, currents=SWEEP_CURRENTS_MA):
-        """
-        Interactive lux calibration for one room.
-
-        Steps through `currents`; at each one type the lux meter reading
-        (Enter skips a step, q finishes early). The other room is turned off.
-        """
-        self._check_room(room)
-        other = 2 if room == 1 else 1
-        print(f"\nCalibrating room {room}. Put the lux meter at the usual "
-              f"measuring spot on the floor and close the chamber.")
-        print(f"Room {other}'s white light is switched off for the sweep.")
-        print("At each step type the reading in lux, Enter to skip, q to finish.\n")
-        self.off()
-        measured = []
-        try:
-            for mA in currents:
-                actual = self.set_current_mA(room, mA)
-                time.sleep(0.5)
-                while True:
-                    text = input(f"  {actual:7.2f} mA (code {self.code(room):4d})  lux = ").strip()
-                    if text.lower() == "q" or text == "":
-                        break
-                    try:
-                        lux = float(text)
-                        if lux < 0:
-                            raise ValueError
-                        measured.append((actual, lux))
-                        break
-                    except ValueError:
-                        print("    Type a number, Enter to skip, or q to finish.")
-                if text.lower() == "q":
-                    break
-        finally:
-            self.off(room)
-
-        points = clean_points(measured)
-        dropped = len(measured) + (0 if any(m == 0 for m, _ in measured) else 1) - len(points)
-        if len(points) < 3:
-            print("\nNot enough readings (need at least two above 0 mA). Nothing saved.")
-            return None
-        if dropped > 0:
-            print(f"\nNote: {dropped} reading(s) did not increase with current and were ignored.")
-        new = RoomCalibration(points, calibrated=True,
-                              date=datetime.datetime.now().isoformat(timespec="minutes"))
-        print("\n   mA        lux")
-        for m, l in points:
-            print(f"  {m:7.2f}  {l:9.2f}")
-        print("\nWith this calibration:")
-        for lux in (10, 100, 1000):
-            mA = new.lux_to_mA(lux)
-            note = "  (above max current!)" if mA > MAX_CURRENT_MA else ""
-            print(f"  {lux:5d} lux -> {mA:7.2f} mA (code {mA_to_code(mA)}){note}")
-        answer = input(f"\nSave this as room {room}'s calibration? [y/N] ").strip().lower()
-        if answer == "y":
-            self.calibration[room] = new
-            save_calibration(self.calibration, self.calibration_file)
-            print(f"Saved to {self.calibration_file}")
-            return new
-        print("Not saved.")
-        return None
-
+    # -- reporting ---------------------------------------------------------
     def info(self):
+        """Constants, DAC status, what the lights are doing, and a scale."""
         address = self.dac.address if self.hardware_ok else DAC_ADDRESS
+        status = (f"GP8403 at 0x{address:02X}, 0-5 V range" if self.hardware_ok
+                  else f"NOT available - {self.error}")
         lines = [
-            f"DAC: {'GP8403 at 0x%02X, 0-5 V range' % address if self.hardware_ok else 'NOT available - ' + str(self.error)}",
+            f"DAC: {status}",
             f"Divider {DIVIDER_RATIO:.2f}:1, sense {SENSE_OHMS} ohm -> "
             f"{MA_PER_CODE:.4f} mA per DAC count, {MAX_CURRENT_MA:.1f} mA full scale",
-            f"Calibration file: {self.calibration_file}",
         ]
 
-        # What the lights are doing right now. The GP8403 cannot be read back,
-        # so this comes from whatever process last pushed a value.
+        # What the lights are doing now. The GP8403 cannot be read back, so
+        # this comes from whichever process last pushed a value.
         if getattr(self, "state_known", None) is False:
-            lines.append("Current output: unknown (no process has set the lights "
+            lines.append("Current output: unknown (nothing has set the lights "
                          "since boot, or the state file was cleared)")
         else:
             states = []
             for room in ROOMS:
                 mA = self.current_mA(room)
-                states.append(f"room {room}: {mA:6.2f} mA (code {self.code(room)}, "
+                states.append(f"room {room}: {self.percent(room):5.1f} % "
+                              f"({mA:6.2f} mA, code {self.code(room)}, "
                               f"{mA * SENSE_OHMS:.1f} mV)")
             lines.append("Current output: " + ";  ".join(states))
 
-        for room in ROOMS:
-            cal = self.calibration[room]
-            status = f"calibrated {cal.date}" if cal.calibrated else "NOT calibrated (simulation estimates)"
-            lines.append(f"Room {room}: {status}; max ~{self.max_lux(room):.0f} lux")
-            for lux in (10, 100, 1000):
-                mA = cal.lux_to_mA(lux)
-                if mA > MAX_CURRENT_MA:
-                    lines.append(f"    {lux:5d} lux -> needs {mA:.0f} mA, above the "
-                                 f"{MAX_CURRENT_MA:.0f} mA maximum (will be capped)")
-                    continue
-                lines.append(f"    {lux:5d} lux -> {mA:7.2f} mA, code {mA_to_code(mA)}, "
-                             f"{mA * SENSE_OHMS:.1f} mV across the sense resistor")
+        lines.append("Scale:")
+        for pct in (1, 10, 25, 50, 100):
+            mA = percent_to_mA(pct)
+            lines.append(f"  {pct:3d} % -> {mA:6.2f} mA, code {mA_to_code(mA):4d}, "
+                         f"{mA * SENSE_OHMS:6.1f} mV across the sense resistor")
         return "\n".join(lines)
 
 
@@ -589,36 +446,32 @@ def set_current_mA(room, mA):
     return actual
 
 
-def set_lux(room, lux):
-    actual = get_lights().set_lux(room, lux)
-    print(f"Room {room}: {lux} lux -> {actual:.2f} mA (code {get_lights().code(room)})")
+def set_percent(room, percent):
+    actual = get_lights().set_percent(room, percent)
+    print(f"Room {room}: {percent:g} % -> {actual:.2f} mA "
+          f"(code {get_lights().code(room)}), "
+          f"expect {actual * SENSE_OHMS:.1f} mV across the {SENSE_OHMS} ohm")
     return actual
-
-
-def sweep(room):
-    return get_lights().sweep(room)
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Chamber white-light control (GP8403 current sink)")
     sub = parser.add_subparsers(dest="cmd")
-    sub.add_parser("info", help="show constants, calibration and DAC status")
+    sub.add_parser("info", help="show constants and DAC status")
     p_off = sub.add_parser("off", help="turn white lights off")
     p_off.add_argument("room", nargs="?", type=int, choices=ROOMS)
     p_set = sub.add_parser("set", help="set a room's current in mA")
     p_set.add_argument("room", type=int, choices=ROOMS)
     p_set.add_argument("mA", type=float)
-    p_lux = sub.add_parser("lux", help="set a room by lux (uses calibration)")
-    p_lux.add_argument("room", type=int, choices=ROOMS)
-    p_lux.add_argument("lux", type=float)
-    p_sweep = sub.add_parser("sweep", help="calibrate a room with a lux meter")
-    p_sweep.add_argument("room", type=int, choices=ROOMS)
+    p_pct = sub.add_parser("pct", help="set a room's brightness in percent")
+    p_pct.add_argument("room", type=int, choices=ROOMS)
+    p_pct.add_argument("percent", type=float)
     args = parser.parse_args(argv)
 
     if args.cmd is None:
         if sys.flags.interactive:
             print(get_lights().info())
-            print("\nFunctions: off(), set_current_mA(room, mA), set_lux(room, lux), sweep(room)")
+            print("\nFunctions: off(), set_current_mA(room, mA), set_percent(room, pct)")
             return 0
         parser.print_help()
         return 0
@@ -636,11 +489,9 @@ def main(argv=None):
     elif args.cmd == "set":
         set_current_mA(args.room, args.mA)
         print("(stays on after exit - run `off` to turn it off)")
-    elif args.cmd == "lux":
-        set_lux(args.room, args.lux)
+    elif args.cmd == "pct":
+        set_percent(args.room, args.percent)
         print("(stays on after exit - run `off` to turn it off)")
-    elif args.cmd == "sweep":
-        lights.sweep(args.room)
     # Release the lock but leave the DAC at its last value on purpose
     lights.dac.close()
     return 0
