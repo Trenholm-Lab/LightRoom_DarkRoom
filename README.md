@@ -43,11 +43,31 @@ Lighting (per room): an IR bank switched by GPIO, and white DuoStrip LEDs driven
 analog current sink - Adafruit GP8403 DAC (product 6516, I2C 0x58) -> 3.9 k/1 k divider ->
 OP295 op-amp -> the existing gate resistor (R22 room 1 / R20 room 2, any value up to
 2.2 k is fine as-is) -> IRLZ44N -> 2.0 ohm sense resistor. The gate resistor does not enter
-the current equation. See
-`analog_dimming_simulation_check_new.pdf` for the circuit and wiring.
+the current equation.
 
-> The analog dimming conversion is built and verified on the rig. `analog_dimming_simulation_check_new.pdf`
-> records the circuit, the expected meter readings and the bench checks.
+Per room the MOSFET source leaves the ground net and goes to a WAGO with the 2.0 ohm sense
+resistor and a sense wire back to the op-amp feedback. **Both rooms' sense resistors, the
+breadboard ground rail and the wire to the global ground must meet in one WAGO** - a star.
+Daisy-chaining them puts one room's return current through the other's feedback: 15 milliohms
+of shared ground was enough to make an idle room glow when the other ran at full scale.
+
+Expected values, for checking against a meter:
+
+| Point | Value |
+|---|---|
+| Sense voltage | current x 2.0 ohm (300 mA -> 600 mV, 30 mA -> 60 mV) |
+| MOSFET Vds | ~3.8 V at 306 mA |
+| MOSFET dissipation | ~1.2 W at 306 mA - it is a *linear* sink, so this is continuous |
+| Heatsink | <=10 C/W bolt-on, or a 70 x 70 x 3 mm aluminium plate mounted vertically |
+
+Two checks worth repeating after any rewiring: **off is off** (both rooms dark, ~0 mV across
+each sense resistor, including after a power cycle before any script runs), and **current
+tracks the command** (`set 1 300` -> 600 mV). A room that goes to full brightness and ignores
+the command has a loose or missing sense wire - the one wiring fault this circuit fails
+loudly on. A room that stays dark has lost its gate drive or its current path.
+
+The MOSFET tab is the drain, several volts above ground: heatsinks must not touch each other,
+the chassis or any ground wiring.
 
 | Function | Pi pin(s) | Notes |
 |---|---|---|

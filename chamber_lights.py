@@ -1,7 +1,7 @@
 """
 White-light control for the LightRoom/DarkRoom chambers (analog current sink).
 
-Hardware (see analog_dimming_simulation_check_new.pdf, DuoStrip version):
+Hardware (DuoStrip version; see the Lighting section of README.md):
 
     Adafruit GP8403 DAC (I2C 0x58, 0-5 V range)
         channel 0 (OUT0) -> room 1     channel 1 (V1) -> room 2
